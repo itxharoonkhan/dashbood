@@ -256,7 +256,7 @@ export const translations: Record<'en' | 'ur', TranslationKeys> = {
     'dashboard.welcome': 'Welcome back, Admin. Here\'s what\'s happening today.',
     'dashboard.totalRevenue': 'Total Revenue',
     'dashboard.salesCount': 'Sales Count',
-    'dashboard.activeCustomers': 'Active Customers',
+    'dashboard.activeCustomers': 'Total Customers',
     'dashboard.lowStock': 'Low Stock Items',
     'dashboard.fromLastMonth': 'from last month',
     'dashboard.realtimeSales': 'Real-time Sales Feed',

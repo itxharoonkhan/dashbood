@@ -27,7 +27,9 @@ import {
   Clock,
   Receipt,
   Printer,
+  Undo2,
 } from "lucide-react"
+import { useToast } from "@/hooks/use-toast"
 import { AIInsights } from "@/components/dashboard/ai-insights"
 
 import { DonutChart } from "@/components/DonutChart"
@@ -46,6 +48,7 @@ interface DashboardStats {
 
 export default function DashboardPage() {
   const { t, isRTL } = useLanguage()
+  const { toast } = useToast()
   const [userRole, setUserRole] = React.useState<string | null>(null)
   const [stats, setStats] = React.useState<DashboardStats | null>(null)
   const [recentSales, setRecentSales] = React.useState<any[]>([])
@@ -55,18 +58,129 @@ export default function DashboardPage() {
   const [selectedSale, setSelectedSale] = React.useState<any>(null)
   const [saleDetail, setSaleDetail] = React.useState<any>(null)
   const [detailLoading, setDetailLoading] = React.useState(false)
+  const [returnMode, setReturnMode] = React.useState(false)
+  const [returnQtys, setReturnQtys] = React.useState<Record<number, number>>({})
+  const [returnReason, setReturnReason] = React.useState('')
+  const [returnLoading, setReturnLoading] = React.useState(false)
+  const [existingReturns, setExistingReturns] = React.useState<{ returns: any[], returned_qtys: Record<number, number> }>({ returns: [], returned_qtys: {} })
 
   const openSaleDetail = async (sale: any) => {
     setSelectedSale(sale)
     setSaleDetail(null)
     setDetailLoading(true)
+    setReturnMode(false)
+    setReturnReason('')
+    setReturnQtys({})
+    setExistingReturns({ returns: [], returned_qtys: {} })
     try {
-      const res = await api.get(`/sales/${sale.id}`)
-      if (res.data.success) setSaleDetail(res.data.data)
+      const [detailRes, returnsRes] = await Promise.all([
+        api.get(`/sales/${sale.id}`),
+        api.get(`/sales/${sale.id}/returns`).catch(() => null)
+      ])
+      if (detailRes.data.success) setSaleDetail(detailRes.data.data)
+      if (returnsRes?.data?.success) setExistingReturns(returnsRes.data.data)
     } catch {
       setSaleDetail({ sale, items: [] })
     } finally {
       setDetailLoading(false)
+    }
+  }
+
+  const enterReturnMode = () => {
+    const initial: Record<number, number> = {}
+    saleDetail?.items?.forEach((item: any) => { initial[item.id] = 0 })
+    setReturnQtys(initial)
+    setReturnMode(true)
+  }
+
+  const printReturnSlip = (returnId: number, refundAmount: number, returnedItems: { product_name: string, quantity: number, price: number }[], reason: string) => {
+    const itemsSubtotal = returnedItems.reduce((s, i) => s + i.quantity * i.price, 0)
+    const taxPortion = parseFloat((refundAmount - itemsSubtotal).toFixed(2))
+    const win = window.open('', '_blank', 'width=400,height=600')
+    if (!win) return
+    win.document.write(`
+      <html><head><title>Return Receipt #${returnId}</title>
+      <style>
+        body { font-family: monospace; font-size: 13px; padding: 20px; max-width: 320px; margin: auto; }
+        h2 { text-align: center; margin-bottom: 4px; font-size: 18px; }
+        .center { text-align: center; }
+        .divider { border-top: 1px dashed #000; margin: 8px 0; }
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; font-size: 12px; padding: 4px 2px; }
+        td { padding: 4px 2px; font-size: 12px; }
+        .right { text-align: right; }
+        .bold { font-weight: bold; }
+        .total { font-weight: bold; font-size: 14px; }
+        @media print { body { padding: 0; } }
+      </style></head><body>
+      <h2>Elites POS</h2>
+      <p class="center" style="font-weight:bold;">Return Receipt</p>
+      <div class="divider"></div>
+      <p><b>Return #:</b> ${returnId}</p>
+      <p><b>Sale #:</b> ${selectedSale?.id}</p>
+      <p><b>Customer:</b> ${selectedSale?.customer_name || 'Walk-in'}</p>
+      <p><b>Date:</b> ${new Date().toLocaleString()}</p>
+      ${reason ? `<p><b>Reason:</b> ${reason}</p>` : ''}
+      <div class="divider"></div>
+      <table>
+        <thead><tr><th>Item</th><th>Qty</th><th class="right">Price</th></tr></thead>
+        <tbody>
+          ${returnedItems.map(item => `
+            <tr>
+              <td>${item.product_name}</td>
+              <td>${item.quantity}</td>
+              <td class="right">Rs. ${(item.quantity * item.price).toFixed(2)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+      <div class="divider"></div>
+      <table style="width:100%">
+        <tr><td>Subtotal:</td><td class="right">Rs. ${itemsSubtotal.toFixed(2)}</td></tr>
+        ${taxPortion > 0 ? `<tr><td>Tax (refunded):</td><td class="right">Rs. ${taxPortion.toFixed(2)}</td></tr>` : ''}
+        <tr style="color:#888"><td>Donation:</td><td class="right">Rs. 1.00 (non-refundable)</td></tr>
+      </table>
+      <div class="divider"></div>
+      <p class="total right">Total Refund: Rs. ${parseFloat(refundAmount.toString()).toFixed(2)}</p>
+      <div class="divider"></div>
+      <p class="center">Stock restored. Thank you!</p>
+      <script>window.onload = () => { window.print(); window.onafterprint = () => window.close(); }<\/script>
+      </body></html>
+    `)
+    win.document.close()
+  }
+
+  const processReturn = async () => {
+    const items = Object.entries(returnQtys)
+      .filter(([, qty]) => qty > 0)
+      .map(([sale_item_id, quantity]) => ({ sale_item_id: parseInt(sale_item_id), quantity }))
+
+    if (items.length === 0) {
+      toast({ title: "Select Items", description: "Return qty barho at least ek item ke liye", variant: "destructive" })
+      return
+    }
+
+    setReturnLoading(true)
+    try {
+      const res = await api.post(`/sales/${selectedSale.id}/return`, { items, reason: returnReason })
+      if (res.data.success) {
+        toast({ title: "Return Processed", description: `Refund: Rs. ${parseFloat(res.data.refund_amount).toFixed(2)} — Stock restored` })
+
+        const returnedItems = items.map(({ sale_item_id, quantity }) => {
+          const item = saleDetail?.items?.find((i: any) => i.id === sale_item_id)
+          return { product_name: item?.product_name || '—', quantity, price: parseFloat(item?.price || 0) }
+        })
+        printReturnSlip(res.data.return_id, parseFloat(res.data.refund_amount), returnedItems, returnReason)
+
+        setReturnMode(false)
+        setReturnQtys({})
+        setReturnReason('')
+        const returnsRes = await api.get(`/sales/${selectedSale.id}/returns`)
+        if (returnsRes.data.success) setExistingReturns(returnsRes.data.data)
+      }
+    } catch (err: any) {
+      toast({ title: "Return Failed", description: err.response?.data?.message || "Error processing return", variant: "destructive" })
+    } finally {
+      setReturnLoading(false)
     }
   }
 
@@ -110,6 +224,13 @@ export default function DashboardPage() {
             : '<tr><td colspan="3" style="text-align:center">No items</td></tr>'
           }
         </tbody>
+      </table>
+      <div class="divider"></div>
+      <table style="width:100%">
+        <tr><td>Subtotal:</td><td class="right">Rs. ${parseFloat(saleDetail?.sale?.total || 0).toFixed(2)}</td></tr>
+        <tr><td>Tax:</td><td class="right">Rs. ${parseFloat(saleDetail?.sale?.tax || 0).toFixed(2)}</td></tr>
+        ${parseFloat(saleDetail?.sale?.discount || 0) > 0 ? `<tr style="color:green"><td>Discount:</td><td class="right">-Rs. ${parseFloat(saleDetail?.sale?.discount || 0).toFixed(2)}</td></tr>` : ''}
+        <tr style="color:purple"><td>Donation:</td><td class="right">Rs. 1.00</td></tr>
       </table>
       <div class="divider"></div>
       <p class="total right">Total: Rs. ${parseFloat(sale?.grand_total || 0).toFixed(2)}</p>
@@ -233,7 +354,7 @@ export default function DashboardPage() {
               <stat.icon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
             </CardHeader>
             <CardContent>
-              <div className="text-xl sm:text-2xl font-bold text-white">{stat.value}</div>
+              <div className="text-xl sm:text-2xl font-bold text-foreground">{stat.value}</div>
               <p className="flex items-center text-xs mt-1 flex-wrap">
                 {stat.trend === "up" ? (
                   <span className="text-accent flex items-center font-semibold">
@@ -258,38 +379,62 @@ export default function DashboardPage() {
         <div className="min-w-0">
           <AIInsights data={{ stats: statsData, recentSales, topCategories }} />
         </div>
-        <Card className="overflow-visible min-w-0">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base sm:text-lg flex items-center gap-2">
-              <Activity className="w-4 h-4 sm:w-5 sm:h-5 text-primary flex-shrink-0" />
-              <span className="truncate">{t('dashboard.realtimeSales')}</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3 sm:space-y-4 max-h-[400px] lg:max-h-none overflow-y-auto lg:overflow-y-visible">
-              {recentSales.length === 0 ? (
-                <p className="text-center text-muted-foreground py-8">No recent sales</p>
-              ) : (
-                recentSales.map((sale: any, i: number) => (
-                  <div key={i} className="flex items-center gap-3">
-                    <button
-                      onClick={() => openSaleDetail(sale)}
-                      className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-secondary flex items-center justify-center flex-shrink-0 hover:bg-primary/20 hover:scale-110 transition-all duration-200 cursor-pointer"
-                      title="View sale details"
-                    >
-                      <ShoppingCart className="w-4 h-4 sm:w-5 sm:h-5 text-primary" />
-                    </button>
-                    <div className="flex-1 min-w-0 space-y-1">
-                      <p className="text-xs sm:text-sm font-medium leading-none truncate">Sale #{sale.id}</p>
-                      <p className="text-[10px] sm:text-xs text-muted-foreground truncate">{sale.customer_name || 'Walk-in'} • {new Date(sale.sale_date).toLocaleTimeString()}</p>
-                    </div>
-                    <div className="text-xs sm:text-base font-bold text-accent flex-shrink-0">
-                      +Rs. {parseFloat(sale.grand_total || sale.grand_total === 0 ? sale.grand_total : 0).toFixed(2)}
-                    </div>
-                  </div>
-                ))
-              )}
+        <Card className="overflow-visible min-w-0 bg-gradient-to-br from-card to-muted/20">
+          <CardHeader className="pb-2 border-b border-border/50">
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="text-base sm:text-lg flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+                  <Activity className="w-4 h-4 text-primary" />
+                </div>
+                <span className="truncate">{t('dashboard.realtimeSales')}</span>
+              </CardTitle>
+              <div className="flex items-center gap-3 shrink-0">
+                <div className="text-right">
+                  <p className="text-lg font-bold text-primary leading-tight">
+                    Rs. {statsData.todayRevenue.toLocaleString()}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">{statsData.todaySales} sales today</p>
+                </div>
+              </div>
             </div>
+          </CardHeader>
+          <CardContent className="pt-3 px-3">
+              {recentSales.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-10 gap-2">
+                  <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
+                    <ShoppingCart className="w-5 h-5 text-muted-foreground" />
+                  </div>
+                  <p className="text-sm text-muted-foreground">No sales today</p>
+                </div>
+              ) : (
+                <div className="space-y-1.5 overflow-y-auto max-h-[320px] pr-1">
+                  {recentSales.map((sale: any, i: number) => (
+                    <button
+                      key={i}
+                      onClick={() => openSaleDetail(sale)}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-primary/8 hover:border-primary/20 border border-transparent transition-all duration-200 group text-left"
+                    >
+                      <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 group-hover:bg-primary/20 transition-colors">
+                        <ShoppingCart className="w-4 h-4 text-primary" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs sm:text-sm font-semibold leading-none truncate text-foreground">
+                          Sale #{sale.id}
+                        </p>
+                        <p className="text-[10px] sm:text-xs text-muted-foreground truncate mt-0.5">
+                          {sale.customer_name || 'Walk-in'} &nbsp;•&nbsp; {new Date(sale.sale_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+                      <div className="flex flex-col items-end flex-shrink-0">
+                        <span className="text-xs sm:text-sm font-bold text-accent">
+                          +Rs. {parseFloat(sale.grand_total || 0).toFixed(0)}
+                        </span>
+                        <span className="text-[9px] text-muted-foreground capitalize">{sale.payment_method || 'cash'}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
           </CardContent>
         </Card>
       </div>
@@ -340,8 +485,8 @@ export default function DashboardPage() {
 
                             {/* Tooltip - positioned above each bar */}
                             <div className="absolute left-1/2 -translate-x-1/2 -top-12 sm:-top-16 z-50 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none group-hover:pointer-events-auto">
-                              <div className="bg-card border border-border rounded-lg px-1.5 sm:px-2 py-1 sm:py-1.5 shadow-xl min-w-[60px] sm:min-w-[80px]">
-                                <p className="text-[8px] sm:text-[10px] font-bold text-white">Rs. {day.revenue.toLocaleString()}</p>
+                              <div className="bg-card border border-border rounded-lg px-1.5 sm:px-2 py-1 sm:py-1.5 shadow-xl inline-block">
+                                <p className="text-[8px] sm:text-[10px] font-bold text-foreground whitespace-nowrap">Rs. {day.revenue.toLocaleString()}</p>
                               </div>
                             </div>
                           </div>
@@ -365,7 +510,7 @@ export default function DashboardPage() {
                       <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-primary/50 flex-shrink-0"></span>
                       <span>Avg Daily</span>
                     </p>
-                    <p className="text-base sm:text-xl font-bold text-white">
+                    <p className="text-base sm:text-xl font-bold text-foreground">
                       Rs. {(dailyRevenue.reduce((a, b) => a + b.revenue, 0) / Math.max(dailyRevenue.length, 1)).toFixed(0)}
                     </p>
                   </div>
@@ -374,7 +519,7 @@ export default function DashboardPage() {
                       <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-accent/50 flex-shrink-0"></span>
                       <span>Total Orders</span>
                     </p>
-                    <p className="text-base sm:text-xl font-bold text-white">
+                    <p className="text-base sm:text-xl font-bold text-foreground">
                       {dailyRevenue.reduce((a, b) => a + b.orders, 0)}
                     </p>
                   </div>
@@ -383,7 +528,7 @@ export default function DashboardPage() {
                       <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-green-500/50 flex-shrink-0"></span>
                       <span>Best Day</span>
                     </p>
-                    <p className="text-base sm:text-xl font-bold text-white">
+                    <p className="text-base sm:text-xl font-bold text-foreground">
                       Rs. {Math.max(...dailyRevenue.map(d => d.revenue)).toLocaleString()}
                     </p>
                   </div>
@@ -416,7 +561,7 @@ export default function DashboardPage() {
     </div>
 
       {/* Sale Detail Dialog */}
-      <Dialog open={!!selectedSale} onOpenChange={(open) => { if (!open) { setSelectedSale(null); setSaleDetail(null) } }}>
+      <Dialog open={!!selectedSale} onOpenChange={(open) => { if (!open) { setSelectedSale(null); setSaleDetail(null); setReturnMode(false); setReturnQtys({}); setReturnReason('') } }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -459,46 +604,137 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {/* Items Table */}
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Items Purchased</p>
-                {saleDetail?.items?.length > 0 ? (
+              {/* Items Table / Return Mode */}
+              {returnMode ? (
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Return Qty Select Karo</p>
                   <div className="border border-border rounded-lg overflow-hidden">
                     <table className="w-full text-sm">
                       <thead className="bg-muted/40">
                         <tr>
                           <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Product</th>
-                          <th className="text-center px-3 py-2 text-xs font-medium text-muted-foreground">Qty</th>
-                          <th className="text-right px-3 py-2 text-xs font-medium text-muted-foreground">Price</th>
+                          <th className="text-center px-2 py-2 text-xs font-medium text-muted-foreground">Sold</th>
+                          <th className="text-center px-2 py-2 text-xs font-medium text-muted-foreground">Avail</th>
+                          <th className="text-center px-2 py-2 text-xs font-medium text-muted-foreground">Return</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {saleDetail.items.map((item: any, idx: number) => (
-                          <tr key={idx} className="border-t border-border/50">
-                            <td className="px-3 py-2 font-medium truncate max-w-[150px]">{item.product_name}</td>
-                            <td className="px-3 py-2 text-center text-muted-foreground">{item.quantity}</td>
-                            <td className="px-3 py-2 text-right text-accent font-semibold">Rs. {parseFloat(item.price).toFixed(2)}</td>
-                          </tr>
-                        ))}
+                        {saleDetail?.items?.map((item: any) => {
+                          const alreadyReturned = existingReturns.returned_qtys[item.id] || 0
+                          const available = item.quantity - alreadyReturned
+                          return (
+                            <tr key={item.id} className="border-t border-border/50">
+                              <td className="px-3 py-2 font-medium truncate max-w-[110px]">{item.product_name}</td>
+                              <td className="px-2 py-2 text-center text-muted-foreground">{item.quantity}</td>
+                              <td className={`px-2 py-2 text-center font-semibold ${available > 0 ? 'text-green-500' : 'text-red-400'}`}>{available}</td>
+                              <td className="px-2 py-2 text-center">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={available}
+                                  value={returnQtys[item.id] ?? 0}
+                                  onChange={(e) => {
+                                    const val = Math.min(Math.max(0, parseInt(e.target.value) || 0), available)
+                                    setReturnQtys(prev => ({ ...prev, [item.id]: val }))
+                                  }}
+                                  disabled={available === 0}
+                                  className="w-14 text-center border border-border rounded px-1 py-1 bg-background text-sm disabled:opacity-40 focus:outline-none focus:ring-1 focus:ring-primary"
+                                />
+                              </td>
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground text-center py-4">No item details available</p>
-                )}
-              </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">Reason (optional)</p>
+                    <textarea
+                      value={returnReason}
+                      onChange={(e) => setReturnReason(e.target.value)}
+                      placeholder="Return ka reason..."
+                      rows={2}
+                      className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-background resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                  <div className="bg-muted/30 rounded-lg px-4 py-3 flex justify-between items-center">
+                    <p className="text-xs text-muted-foreground">Estimated Refund</p>
+                    <p className="text-lg font-bold text-accent">
+                      Rs. {(saleDetail?.items?.reduce((sum: number, item: any) => sum + (returnQtys[item.id] || 0) * parseFloat(item.price), 0) || 0).toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Items Purchased</p>
+                  {saleDetail?.items?.length > 0 ? (
+                    <div className="border border-border rounded-lg overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead className="bg-muted/40">
+                          <tr>
+                            <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Product</th>
+                            <th className="text-center px-3 py-2 text-xs font-medium text-muted-foreground">Qty</th>
+                            <th className="text-right px-3 py-2 text-xs font-medium text-muted-foreground">Price</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {saleDetail.items.map((item: any, idx: number) => (
+                            <tr key={idx} className="border-t border-border/50">
+                              <td className="px-3 py-2 font-medium truncate max-w-[150px]">{item.product_name}</td>
+                              <td className="px-3 py-2 text-center text-muted-foreground">{item.quantity}</td>
+                              <td className="px-3 py-2 text-right text-accent font-semibold">Rs. {parseFloat(item.price).toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground text-center py-4">No item details available</p>
+                  )}
+                  {existingReturns.returns.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-border">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Returns Made</p>
+                      <div className="space-y-1">
+                        {existingReturns.returns.map((ret: any) => (
+                          <div key={ret.id} className="flex justify-between items-center text-xs bg-red-500/10 border border-red-500/20 rounded px-3 py-1.5">
+                            <span className="text-muted-foreground">Return #{ret.id} • {new Date(ret.return_date).toLocaleDateString()}{ret.reason ? ` — ${ret.reason}` : ''}</span>
+                            <span className="text-red-400 font-bold">-Rs. {parseFloat(ret.refund_amount).toFixed(2)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
           {!detailLoading && (
             <DialogFooter>
-              <Button
-                onClick={printReceipt}
-                className="w-full gap-2 bg-primary hover:bg-primary/90"
-              >
-                <Printer className="w-4 h-4" />
-                Print Receipt
-              </Button>
+              {returnMode ? (
+                <div className="flex gap-2 w-full">
+                  <Button variant="outline" onClick={() => setReturnMode(false)} className="flex-1" disabled={returnLoading}>
+                    Cancel
+                  </Button>
+                  <Button onClick={processReturn} disabled={returnLoading} className="flex-1 gap-2 bg-red-600 hover:bg-red-700 text-white">
+                    {returnLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Undo2 className="w-4 h-4" />}
+                    Submit Return
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex gap-2 w-full">
+                  {saleDetail?.sale?.status !== 'cancelled' && (
+                    <Button variant="outline" onClick={enterReturnMode} className="flex-1 gap-2">
+                      <Undo2 className="w-4 h-4" />
+                      Return Items
+                    </Button>
+                  )}
+                  <Button onClick={printReceipt} className="flex-1 gap-2 bg-primary hover:bg-primary/90">
+                    <Printer className="w-4 h-4" />
+                    Print Receipt
+                  </Button>
+                </div>
+              )}
             </DialogFooter>
           )}
         </DialogContent>

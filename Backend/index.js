@@ -85,6 +85,7 @@ app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/reports', require('./routes/reports'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/menu', require('./routes/menu'));
+app.use('/api/shifts', require('./routes/shifts'));
 
 // ===============================
 // ROOT

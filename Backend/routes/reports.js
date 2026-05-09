@@ -18,12 +18,22 @@ router.use(checkRole(['admin']));
 router.get('/all', async (req, res) => {
   try {
     const { period = 'week' } = req.query;
-    
-    let dateCondition = 'sales.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
-    if (period === 'today') dateCondition = 'DATE(sales.created_at) = CURDATE()';
-    else if (period === 'month') dateCondition = 'sales.created_at >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH)';
-    else if (period === 'year') dateCondition = 'sales.created_at >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)';
-    else if (period === 'all') dateCondition = '1=1';
+
+    let dateFilter  = 's.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
+    let salesFilter = 'sales.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
+    if (period === 'today') {
+      dateFilter  = 'DATE(s.created_at) = CURDATE()';
+      salesFilter = 'DATE(sales.created_at) = CURDATE()';
+    } else if (period === 'month') {
+      dateFilter  = 's.created_at >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH)';
+      salesFilter = 'sales.created_at >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH)';
+    } else if (period === 'year') {
+      dateFilter  = 's.created_at >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)';
+      salesFilter = 'sales.created_at >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)';
+    } else if (period === 'all') {
+      dateFilter  = '1=1';
+      salesFilter = '1=1';
+    }
 
     const [
       [salesRows],
@@ -32,33 +42,59 @@ router.get('/all', async (req, res) => {
       [profitRows]
     ] = await Promise.all([
       db.query(`
-        SELECT DATE(created_at) AS date, SUM(final_total) AS revenue, COUNT(*) AS total_sales
-        FROM sales WHERE ${dateCondition}
-        GROUP BY DATE(created_at) ORDER BY date ASC
+        SELECT DATE(s.created_at) AS date,
+          SUM(s.final_total) - IFNULL(SUM(ret_sum.refund_amount), 0) AS revenue,
+          COUNT(DISTINCT s.id) AS total_sales
+        FROM sales s
+        LEFT JOIN (
+          SELECT sale_id, SUM(refund_amount) AS refund_amount
+          FROM sale_returns GROUP BY sale_id
+        ) ret_sum ON s.id = ret_sum.sale_id
+        WHERE ${dateFilter}
+        GROUP BY DATE(s.created_at) ORDER BY date ASC
       `),
       db.query(`
-        SELECT p.category AS name, SUM(si.quantity * si.price) AS value
-        FROM sale_items si 
+        SELECT p.category AS name,
+          SUM(si.quantity * si.price) - IFNULL(SUM(sri_sum.returned_amount), 0) AS value
+        FROM sale_items si
         JOIN products p ON si.product_id = p.id
         JOIN sales ON si.sale_id = sales.id
-        WHERE ${dateCondition}
+        LEFT JOIN (
+          SELECT sale_item_id, SUM(quantity * price) AS returned_amount
+          FROM sale_return_items GROUP BY sale_item_id
+        ) sri_sum ON si.id = sri_sum.sale_item_id
+        WHERE ${salesFilter}
         GROUP BY p.category ORDER BY value DESC
       `),
       db.query(`
         SELECT IFNULL(SUM(final_total - tax), 0) AS total_taxable_amount, IFNULL(SUM(tax), 0) AS total_tax
-        FROM sales WHERE status = 'completed' AND ${dateCondition}
+        FROM sales WHERE status = 'completed' AND ${salesFilter}
       `),
       db.query(`
-        SELECT IFNULL(SUM(si.price * si.quantity), 0) AS total_revenue, IFNULL(SUM(p.cost_price * si.quantity), 0) AS total_cost
-        FROM sale_items si 
+        SELECT
+          (
+            SELECT IFNULL(SUM(final_total), 0)
+            FROM sales
+            WHERE status != 'cancelled' AND ${salesFilter}
+          ) AS total_revenue,
+          IFNULL(SUM(p.cost_price * si.quantity), 0) AS total_cost,
+          IFNULL((
+            SELECT SUM(sr.refund_amount)
+            FROM sale_returns sr
+            JOIN sales s_ref ON sr.sale_id = s_ref.id
+            WHERE ${salesFilter.replace(/\bsales\b/g, 's_ref')}
+          ), 0) AS total_refunded
+        FROM sale_items si
         JOIN products p ON si.product_id = p.id
         JOIN sales ON si.sale_id = sales.id
-        WHERE ${dateCondition}
+        WHERE ${salesFilter}
       `)
     ]);
 
     const total_tax = taxRows[0].total_tax;
-    const revenue = profitRows[0].total_revenue;
+    const gross_revenue = profitRows[0].total_revenue;
+    const total_refunded = profitRows[0].total_refunded;
+    const revenue = gross_revenue - total_refunded;
     const cost = profitRows[0].total_cost;
     const profit = revenue - cost;
 
@@ -235,7 +271,7 @@ router.get('/daily-sales', async (req, res) => {
       FROM sales
       WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
       GROUP BY DATE(created_at)
-      ORDER BY date DESC
+      ORDER BY date ASC
     `);
 
     res.json({
@@ -276,6 +312,7 @@ router.get('/export-detail', async (req, res) => {
         si.quantity,
         si.price AS unit_price,
         (si.quantity * si.price) AS item_total,
+        s.tax,
         s.payment_method,
         s.final_total AS order_total,
         s.status
@@ -284,7 +321,7 @@ router.get('/export-detail', async (req, res) => {
       JOIN sale_items si ON s.id = si.sale_id
       JOIN products p ON si.product_id = p.id
       WHERE ${dateCondition}
-      ORDER BY s.id DESC
+      ORDER BY s.id ASC
     `);
 
     res.json({ success: true, data: rows });

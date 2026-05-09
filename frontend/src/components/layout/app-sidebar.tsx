@@ -20,6 +20,7 @@ import {
   Lock,
   Eye,
   EyeOff,
+  Clock,
 } from "lucide-react"
 
 import {
@@ -95,6 +96,7 @@ export function AppSidebar() {
   const availablePages = [
     { id: "dashboard", label: "Dashboard" },
     { id: "sales", label: "POS" },
+    { id: "shifts", label: "Shifts" },
     { id: "inventory", label: "Inventory" },
     { id: "customers", label: "Customers" },
     { id: "reports", label: "Reports" },
@@ -125,6 +127,13 @@ export function AppSidebar() {
       icon: ShoppingCart,
       roles: ['admin', 'cashier'],
       permission: 'sales'
+    },
+    {
+      title: "Shifts",
+      url: "/shifts",
+      icon: Clock,
+      roles: ['admin', 'cashier'],
+      permission: 'shifts'
     },
     {
       title: t('nav.inventory'),
@@ -295,7 +304,7 @@ export function AppSidebar() {
               <SidebarMenuButton
                 onClick={() => setIsCashierOpen(true)}
                 tooltip="Create User"
-                className="py-5 bg-purple-500/10 hover:bg-purple-500 text-black dark:text-white transition-all duration-200"
+                className="py-5 bg-purple-500/10 hover:bg-purple-500 text-foreground hover:text-white transition-all duration-200"
               >
                 <UserPlus />
                 <span>Create User</span>

@@ -1,8 +1,9 @@
 "use client"
 
 import * as React from "react"
+import Image from "next/image"
 import { useRouter } from "next/navigation"
-import { Store, Mail, Lock, Eye, EyeOff } from "lucide-react"
+import { Mail, Lock, Eye, EyeOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -143,11 +144,17 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary/10 via-background to-accent/10 p-4">
       <Card className="w-full max-w-md shadow-2xl">
         <CardHeader className="space-y-3 text-center">
-          <div className="mx-auto w-16 h-16 rounded-2xl bg-accent flex items-center justify-center shadow-lg">
-            <Store className="w-8 h-8 text-accent-foreground" />
+          <div className="mx-auto flex items-center justify-center">
+            <Image
+              src="/Logoo.png"
+              alt="Software Elites"
+              width={220}
+              height={72}
+              priority
+              className="object-contain"
+            />
           </div>
           <div>
-            <CardTitle className="text-3xl font-bold">Elites POS</CardTitle>
             <CardDescription className="text-base">
               Sign in to your account to continue
             </CardDescription>

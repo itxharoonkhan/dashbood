@@ -99,7 +99,7 @@ router.post('/login', async (req, res) => {
       lockTime = (user.lockUntil instanceof Date) ? user.lockUntil : new Date(user.lockUntil);
     }
 
-    if (lockTime && (lockTime.getTime() > (now.getTime() - 2000))) {
+    if (lockTime && lockTime > now) {
       const remainingMs = lockTime.getTime() - now.getTime();
       const remainingMins = Math.max(1, Math.ceil(remainingMs / (60 * 1000)));
       return res.json({
@@ -165,6 +165,70 @@ router.post('/login', async (req, res) => {
       message: "Server login error",
       error: err.message
     });
+  }
+});
+
+// ===============================
+// GET ALL ACCOUNTS (Admin Only)
+// ===============================
+router.get('/accounts', verifyToken, checkRole(['admin']), async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      "SELECT id, name, email, role, permissions, failedAttempts, lockUntil, created_at FROM users ORDER BY created_at DESC"
+    );
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error('❌ Accounts Fetch Error:', err);
+    res.status(500).json({ success: false, message: "Failed to fetch accounts", error: err.message });
+  }
+});
+
+// ===============================
+// UNLOCK ACCOUNT (Admin Only)
+// ===============================
+router.put('/unlock/:id', verifyToken, checkRole(['admin']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [result] = await db.query(
+      "UPDATE users SET failedAttempts = 0, lockUntil = NULL WHERE id = ?",
+      [id]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+    res.json({ success: true, message: "Account unlocked successfully" });
+  } catch (err) {
+    console.error('❌ Unlock Error:', err);
+    res.status(500).json({ success: false, message: "Failed to unlock account", error: err.message });
+  }
+});
+
+// ===============================
+// DELETE ACCOUNT (Admin Only)
+// ===============================
+router.delete('/accounts/:id', verifyToken, checkRole(['admin']), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Prevent deletion of main admin account
+    const [target] = await db.query("SELECT email FROM users WHERE id = ?", [id]);
+    if (!target || target.length === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+    if (target[0].email === 'admin@elites.com') {
+      return res.status(400).json({ success: false, message: "Main admin account cannot be deleted." });
+    }
+
+    const [result] = await db.query("DELETE FROM users WHERE id = ?", [id]);
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    res.json({ success: true, message: "Account deleted successfully" });
+  } catch (err) {
+    console.error('❌ Delete Account Error:', err);
+    res.status(500).json({ success: false, message: "Failed to delete account", error: err.message });
   }
 });
 

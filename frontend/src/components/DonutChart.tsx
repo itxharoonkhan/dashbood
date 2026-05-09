@@ -143,8 +143,8 @@ export function DonutChart({
         {/* Center Label */}
         {showLabel && (
           <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-            <p className="text-[10px] sm:text-xs text-white mb-0.5 font-medium uppercase tracking-wider">Total</p>
-            <p className="text-lg sm:text-xl font-extrabold text-white">
+            <p className="text-[10px] sm:text-xs text-muted-foreground mb-0.5 font-medium uppercase tracking-wider">Total</p>
+            <p className="text-lg sm:text-xl font-extrabold text-foreground">
               {valueFormatter ? valueFormatter(total) : total.toLocaleString()}
             </p>
           </div>

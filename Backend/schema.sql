@@ -62,6 +62,8 @@ CREATE TABLE IF NOT EXISTS customers (
 CREATE TABLE IF NOT EXISTS sales (
   id              INT AUTO_INCREMENT PRIMARY KEY,
   customer_id     INT,
+  cashier_id      INT NULL,
+  shift_id        INT NULL,
   total           DECIMAL(10,2) DEFAULT 0,
   discount        DECIMAL(10,2) DEFAULT 0,
   tax             DECIMAL(10,2) DEFAULT 0,
@@ -86,6 +88,50 @@ CREATE TABLE IF NOT EXISTS sale_items (
 );
 
 -- ============================================================
+-- TABLE: sale_returns
+-- ============================================================
+CREATE TABLE IF NOT EXISTS sale_returns (
+  id            INT AUTO_INCREMENT PRIMARY KEY,
+  sale_id       INT NOT NULL,
+  return_date   DATETIME DEFAULT NOW(),
+  reason        VARCHAR(500),
+  refund_amount DECIMAL(10,2) DEFAULT 0,
+  FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE
+);
+
+-- ============================================================
+-- TABLE: sale_return_items
+-- ============================================================
+CREATE TABLE IF NOT EXISTS sale_return_items (
+  id            INT AUTO_INCREMENT PRIMARY KEY,
+  return_id     INT NOT NULL,
+  sale_item_id  INT,
+  product_id    INT NOT NULL,
+  quantity      INT NOT NULL,
+  price         DECIMAL(10,2) NOT NULL,
+  FOREIGN KEY (return_id)    REFERENCES sale_returns(id) ON DELETE CASCADE,
+  FOREIGN KEY (product_id)   REFERENCES products(id)     ON DELETE CASCADE
+);
+
+-- ============================================================
+-- TABLE: shifts
+-- Amounts stored in paise (1 rupee = 100 paise)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS shifts (
+  id             INT AUTO_INCREMENT PRIMARY KEY,
+  cashier_id     INT NOT NULL,
+  opening_cash   BIGINT NOT NULL DEFAULT 0,
+  closing_cash   BIGINT NULL,
+  expected_cash  BIGINT NULL,
+  variance       BIGINT NULL,
+  start_time     DATETIME DEFAULT NOW(),
+  end_time       DATETIME NULL,
+  status         ENUM('open', 'closed') DEFAULT 'open',
+  notes          TEXT,
+  FOREIGN KEY (cashier_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- ============================================================
 -- TABLE: settings
 -- (only 1 row - id = 1)
 -- ============================================================
@@ -97,7 +143,7 @@ CREATE TABLE IF NOT EXISTS settings (
   store_email     VARCHAR(100),
   store_gstin     VARCHAR(50),
   currency        VARCHAR(10) DEFAULT 'PKR',
-  tax_rate        DECIMAL(5,2) DEFAULT 0,
+  tax_rate        DECIMAL(5,2) DEFAULT 5,
   items_per_page  INT DEFAULT 10,
   theme           VARCHAR(50) DEFAULT 'dark',
   invoice_prefix  VARCHAR(20) DEFAULT 'INV',
@@ -110,7 +156,13 @@ CREATE TABLE IF NOT EXISTS settings (
 
 -- Default settings row (id = 1, required by backend)
 INSERT IGNORE INTO settings (id, store_name, currency, tax_rate, items_per_page, theme, invoice_prefix, low_stock_alert)
-VALUES (1, 'Elites POS', 'PKR', 0, 10, 'dark', 'INV', 5);
+VALUES (1, 'Elites POS', 'PKR', 5, 10, 'dark', 'INV', 5);
+
+-- ============================================================
+-- FOR EXISTING INSTALLATIONS: run these ALTER statements once
+-- ============================================================
+-- ALTER TABLE sales ADD COLUMN IF NOT EXISTS cashier_id INT NULL;
+-- ALTER TABLE sales ADD COLUMN IF NOT EXISTS shift_id INT NULL;
 
 -- Default admin user
 -- Email: admin@elites.com  |  Password: admin123

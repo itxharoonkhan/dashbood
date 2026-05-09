@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Image from "next/image"
-import { Search, Minus, Plus, Trash2, ShoppingCart, Bell, Settings, LogOut, Printer, ChevronDown, ChevronUp, Globe } from "lucide-react"
+import { Search, Minus, Plus, Trash2, ShoppingCart, Bell, Settings, LogOut, Printer, ChevronDown, ChevronUp, Globe, ScanLine } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
@@ -36,6 +36,7 @@ interface OrderData {
   orderNumber?: string
   customerName?: string
   customerPhone?: string
+  orderTime?: Date
 }
 
 interface MenuItem {
@@ -73,6 +74,96 @@ export default function POSPage() {
   const [savedOrder, setSavedOrder] = React.useState<OrderData | null>(null)
   const [showAddedPopup, setShowAddedPopup] = React.useState(false)
   const [lastAddedItem, setLastAddedItem] = React.useState("")
+  const [taxRate, setTaxRate] = React.useState(5)
+  const [barcodeInput, setBarcodeInput] = React.useState("")
+  const [barcodeLoading, setBarcodeLoading] = React.useState(false)
+  const barcodeRef = React.useRef<HTMLInputElement>(null)
+
+  // Fetch settings (tax rate) from API
+  React.useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const res = await api.get('/settings')
+        const raw = res.data.data || res.data.settings || {}
+        if (raw.tax_rate) setTaxRate(parseInt(raw.tax_rate) || 5)
+      } catch {
+        // fallback to default 5%
+      }
+    }
+    fetchSettings()
+  }, [])
+
+  const playBeep = (success: boolean) => {
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      if (success) {
+        osc.frequency.value = 1050
+        osc.type = 'sine'
+        gain.gain.setValueAtTime(0.3, ctx.currentTime)
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15)
+        osc.start(ctx.currentTime)
+        osc.stop(ctx.currentTime + 0.15)
+      } else {
+        osc.frequency.value = 300
+        osc.type = 'square'
+        gain.gain.setValueAtTime(0.3, ctx.currentTime)
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35)
+        osc.start(ctx.currentTime)
+        osc.stop(ctx.currentTime + 0.35)
+      }
+    } catch { /* audio not supported */ }
+  }
+
+  // Barcode search function
+  const handleBarcodeSearch = async (code: string) => {
+    const scannedCode = code.trim()
+    if (!scannedCode) return
+    setBarcodeLoading(true)
+    try {
+      const res = await api.get(`/products/barcode/${scannedCode}`)
+      const p = res.data.data
+      const stock = parseInt(p.stock) || 0
+      if (stock <= 0) {
+        playBeep(false)
+        toast({ title: "Out of Stock", description: `${p.name} ka stock khatam ho gaya`, variant: "destructive" })
+      } else {
+        playBeep(true)
+        setMenuItems(prev => prev.map(m => m.id === p.id ? { ...m, stock: m.stock - 1 } : m))
+        setCartItems(prev => ({ ...prev, [p.id.toString()]: (prev[p.id.toString()] || 0) + 1 }))
+        setCart(prev => {
+          const existing = prev.find(item => item.id === p.id.toString())
+          if (existing) return prev.map(item => item.id === p.id.toString() ? { ...item, quantity: item.quantity + 1 } : item)
+          return [...prev, { id: p.id.toString(), name: p.name, price: parseFloat(p.selling_price) || 0, quantity: 1, category: p.category || 'General' }]
+        })
+        setLastAddedItem(p.name)
+        setShowAddedPopup(true)
+        setTimeout(() => setShowAddedPopup(false), 1500)
+      }
+    } catch (err: any) {
+      playBeep(false)
+      if (err.response?.status === 404) {
+        toast({
+          title: "Barcode Nahi Mila",
+          description: `"${scannedCode}" — is barcode ka koi product nahi mila`,
+          variant: "destructive",
+        })
+      } else {
+        toast({
+          title: "Scan Error",
+          description: "Server se connect nahi ho pa raha, dobara try karo",
+          variant: "destructive",
+        })
+      }
+    } finally {
+      setBarcodeInput("")
+      setBarcodeLoading(false)
+      barcodeRef.current?.focus()
+    }
+  }
 
   // Fetch menu items from API
   React.useEffect(() => {
@@ -254,7 +345,7 @@ export default function POSPage() {
   }
 
   const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0)
-  const tax = 4
+  const tax = parseFloat((subtotal * (taxRate / 100)).toFixed(2))
   const donation = 1
   const total = subtotal + tax + donation
 
@@ -293,6 +384,7 @@ export default function POSPage() {
         payment_method: selectedPaymentMethod,
         amount_paid: total,
         discount: 0,
+        tax: tax,
         customer_name: customerData?.name,
         customer_phone: customerData?.phone,
       })
@@ -311,6 +403,7 @@ export default function POSPage() {
           orderNumber: formattedOrderNumber,
           customerName: customerData?.name,
           customerPhone: customerData?.phone,
+          orderTime: new Date(),
         }
         setSavedOrder(orderData)
 
@@ -370,15 +463,27 @@ export default function POSPage() {
             </div>
           </div>
 
-          {/* Search Bar - Hidden on mobile, shown on md+ */}
-          <div className="hidden md:flex flex-1 max-w-lg mx-4">
-            <div className="relative w-full">
+          {/* Search + Barcode - Hidden on mobile, shown on md+ */}
+          <div className="hidden md:flex flex-1 max-w-2xl mx-4 gap-2">
+            <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder={t('header.search')}
                 className="pl-10 h-10 text-sm border-white bg-muted/50 focus:bg-card focus:border-white focus:ring-2 focus:ring-white/20 rounded-full text-foreground"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+            <div className="relative w-48">
+              <ScanLine className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                ref={barcodeRef}
+                placeholder="Scan barcode..."
+                className="pl-10 h-10 text-sm border-white bg-muted/50 focus:bg-card focus:border-primary focus:ring-2 focus:ring-primary/20 rounded-full text-foreground"
+                value={barcodeInput}
+                onChange={(e) => setBarcodeInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleBarcodeSearch(barcodeInput) }}
+                disabled={barcodeLoading}
               />
             </div>
           </div>
@@ -466,6 +571,7 @@ export default function POSPage() {
         orderNumber={savedOrder?.orderNumber || orderNumber}
         customerName={savedOrder?.customerName}
         customerPhone={savedOrder?.customerPhone}
+        orderTime={savedOrder?.orderTime}
       />
 
       {/* Main Content - Optimized for 320px+ */}
@@ -742,7 +848,7 @@ export default function POSPage() {
                   <span className="font-medium text-foreground">Rs. {subtotal.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('payment.tax')}</span>
+                  <span className="text-muted-foreground">{t('payment.tax')} ({taxRate}%)</span>
                   <span className="font-medium text-foreground">Rs. {tax.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">

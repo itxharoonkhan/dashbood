@@ -32,6 +32,8 @@ interface ReceiptPrintDialogProps {
   tableNumber?: string
   customerName?: string
   customerPhone?: string
+  storeName?: string
+  orderTime?: Date
 }
 
 export function ReceiptPrintDialog({
@@ -47,12 +49,34 @@ export function ReceiptPrintDialog({
   tableNumber = "04",
   customerName,
   customerPhone,
+  storeName,
+  orderTime,
 }: ReceiptPrintDialogProps) {
   const { toast } = useToast()
   const receiptRef = React.useRef<HTMLDivElement>(null)
   const [currentTime, setCurrentTime] = React.useState(new Date())
+  const [fetchedStoreName, setFetchedStoreName] = React.useState<string>("")
   const [isEditing, setIsEditing] = React.useState(false)
   const [editableCart, setEditableCart] = React.useState<CartItem[]>(cart)
+
+  // Fetch store name from settings if not passed as prop
+  React.useEffect(() => {
+    if (storeName) {
+      setFetchedStoreName(storeName)
+      return
+    }
+    const fetchStoreName = async () => {
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api'}/settings`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
+        })
+        const data = await res.json()
+        const name = data?.data?.store_name || data?.settings?.store_name || ''
+        if (name) setFetchedStoreName(name)
+      } catch { /* fallback to default */ }
+    }
+    fetchStoreName()
+  }, [storeName])
 
   React.useEffect(() => {
     setEditableCart(cart)
@@ -92,7 +116,8 @@ export function ReceiptPrintDialog({
   const recalculatedSubtotal = editableCart.reduce((sum, item) => sum + (item.price * item.quantity), 0)
   const ratio = subtotal > 0 ? recalculatedSubtotal / subtotal : 0
   const recalculatedTax = tax * ratio
-  const recalculatedTotal = recalculatedSubtotal + recalculatedTax + (discount > 0 ? 0 : 0)
+  const donation = 1
+  const recalculatedTotal = recalculatedSubtotal + recalculatedTax + donation
 
   const handlePrint = () => {
     if (!receiptRef.current) return
@@ -199,11 +224,11 @@ export function ReceiptPrintDialog({
             {/* Store Header */}
             <div style={{ textAlign: 'center', marginBottom: '12px' }}>
               <h1 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '4px' }}>
-                Tasty Station
+                {fetchedStoreName || storeName || 'Elites POS'}
               </h1>
               <p style={{ fontSize: '10px', color: '#666' }}>POS Terminal</p>
               <p style={{ fontSize: '10px', marginTop: '4px' }}>
-                {formatTime(currentTime)}
+                {formatTime(orderTime || currentTime)}
               </p>
             </div>
 
@@ -266,6 +291,10 @@ export function ReceiptPrintDialog({
                   <span>-Rs. {discount.toFixed(2)}</span>
                 </div>
               )}
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', margin: '3px 0', color: '#7c3aed' }}>
+                <span>Donation:</span>
+                <span>Rs. {donation.toFixed(2)}</span>
+              </div>
               <div style={{ borderTop: '2px solid #000', marginTop: '6px', paddingTop: '6px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: 'bold' }}>
                   <span>TOTAL:</span>

@@ -24,19 +24,29 @@ router.get('/all', checkRole(['admin', 'cashier']), async (req, res) => {
       [dailySales]
     ] = await Promise.all([
       db.query(`
-        SELECT 
-          (SELECT IFNULL(SUM(final_total),0) FROM sales WHERE DATE(created_at) = CURDATE()) AS todayRevenue,
-          (SELECT COUNT(*) FROM sales WHERE DATE(created_at) = CURDATE()) AS todaySales,
+        SELECT
+          (
+            IFNULL((SELECT SUM(final_total) FROM sales WHERE status != 'cancelled' AND DATE(created_at) = CURDATE()), 0) -
+            IFNULL((SELECT SUM(sr.refund_amount) FROM sale_returns sr JOIN sales s ON sr.sale_id = s.id WHERE DATE(s.created_at) = CURDATE()), 0)
+          ) AS todayRevenue,
+          (SELECT COUNT(*) FROM sales WHERE status != 'cancelled' AND DATE(created_at) = CURDATE()) AS todaySales,
           (SELECT COUNT(*) FROM customers) AS totalCustomers,
           (SELECT COUNT(*) FROM products WHERE stock <= threshold) AS lowStock,
-          (SELECT IFNULL(SUM(final_total),0) FROM sales WHERE YEAR(created_at) = YEAR(CURDATE()) AND WEEK(created_at) = WEEK(CURDATE())) AS weekRevenue,
-          (SELECT IFNULL(SUM(final_total),0) FROM sales WHERE YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE())) AS monthRevenue
+          (
+            IFNULL((SELECT SUM(final_total) FROM sales WHERE status != 'cancelled' AND YEAR(created_at) = YEAR(CURDATE()) AND WEEK(created_at) = WEEK(CURDATE())), 0) -
+            IFNULL((SELECT SUM(sr.refund_amount) FROM sale_returns sr JOIN sales s ON sr.sale_id = s.id WHERE YEAR(s.created_at) = YEAR(CURDATE()) AND WEEK(s.created_at) = WEEK(CURDATE())), 0)
+          ) AS weekRevenue,
+          (
+            IFNULL((SELECT SUM(final_total) FROM sales WHERE status != 'cancelled' AND YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE())), 0) -
+            IFNULL((SELECT SUM(sr.refund_amount) FROM sale_returns sr JOIN sales s ON sr.sale_id = s.id WHERE YEAR(s.created_at) = YEAR(CURDATE()) AND MONTH(s.created_at) = MONTH(CURDATE())), 0)
+          ) AS monthRevenue
       `),
       db.query(`
         SELECT s.id, s.final_total AS grand_total, s.payment_method, s.created_at AS sale_date,
                c.name AS customer_name
         FROM sales s LEFT JOIN customers c ON s.customer_id = c.id
-        ORDER BY s.id DESC LIMIT 5
+        WHERE s.status != 'cancelled' AND DATE(s.created_at) = CURDATE()
+        ORDER BY s.id DESC
       `),
       db.query(`
         SELECT p.category, SUM(si.quantity) AS total_items_sold, SUM(si.quantity * si.price) AS total_revenue
@@ -44,9 +54,15 @@ router.get('/all', checkRole(['admin', 'cashier']), async (req, res) => {
         GROUP BY p.category ORDER BY total_revenue DESC LIMIT 5
       `),
       db.query(`
-        SELECT DATE(created_at) AS date, COUNT(*) AS sales_count, SUM(final_total) AS revenue
-        FROM sales WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-        GROUP BY DATE(created_at) ORDER BY date DESC
+        SELECT DATE(s.created_at) AS date, COUNT(DISTINCT s.id) AS sales_count,
+          SUM(s.final_total) - IFNULL(SUM(ret_sum.refund_amount), 0) AS revenue
+        FROM sales s
+        LEFT JOIN (
+          SELECT sale_id, SUM(refund_amount) AS refund_amount
+          FROM sale_returns GROUP BY sale_id
+        ) ret_sum ON s.id = ret_sum.sale_id
+        WHERE s.status != 'cancelled' AND s.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+        GROUP BY DATE(s.created_at) ORDER BY date DESC
       `)
     ]);
 
@@ -75,13 +91,22 @@ router.get('/all', checkRole(['admin', 'cashier']), async (req, res) => {
 router.get('/stats', checkRole(['admin', 'cashier']), async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT 
-        (SELECT IFNULL(SUM(final_total),0) FROM sales WHERE DATE(created_at) = CURDATE()) AS todayRevenue,
-        (SELECT COUNT(*) FROM sales WHERE DATE(created_at) = CURDATE()) AS todaySales,
+      SELECT
+        (
+          IFNULL((SELECT SUM(final_total) FROM sales WHERE status != 'cancelled' AND DATE(created_at) = CURDATE()), 0) -
+          IFNULL((SELECT SUM(sr.refund_amount) FROM sale_returns sr JOIN sales s ON sr.sale_id = s.id WHERE DATE(s.created_at) = CURDATE()), 0)
+        ) AS todayRevenue,
+        (SELECT COUNT(*) FROM sales WHERE status != 'cancelled' AND DATE(created_at) = CURDATE()) AS todaySales,
         (SELECT COUNT(*) FROM customers) AS totalCustomers,
         (SELECT COUNT(*) FROM products WHERE stock <= threshold) AS lowStock,
-        (SELECT IFNULL(SUM(final_total),0) FROM sales WHERE YEAR(created_at) = YEAR(CURDATE()) AND WEEK(created_at) = WEEK(CURDATE())) AS weekRevenue,
-        (SELECT IFNULL(SUM(final_total),0) FROM sales WHERE YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE())) AS monthRevenue
+        (
+          IFNULL((SELECT SUM(final_total) FROM sales WHERE status != 'cancelled' AND YEAR(created_at) = YEAR(CURDATE()) AND WEEK(created_at) = WEEK(CURDATE())), 0) -
+          IFNULL((SELECT SUM(sr.refund_amount) FROM sale_returns sr JOIN sales s ON sr.sale_id = s.id WHERE YEAR(s.created_at) = YEAR(CURDATE()) AND WEEK(s.created_at) = WEEK(CURDATE())), 0)
+        ) AS weekRevenue,
+        (
+          IFNULL((SELECT SUM(final_total) FROM sales WHERE status != 'cancelled' AND YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE())), 0) -
+          IFNULL((SELECT SUM(sr.refund_amount) FROM sale_returns sr JOIN sales s ON sr.sale_id = s.id WHERE YEAR(s.created_at) = YEAR(CURDATE()) AND MONTH(s.created_at) = MONTH(CURDATE())), 0)
+        ) AS monthRevenue
     `);
 
     res.json({
@@ -210,13 +235,15 @@ router.get('/insights', checkRole(['admin', 'cashier']), async (req, res) => {
 router.get('/daily-sales', checkRole(['admin', 'cashier']), async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT
-        DATE(created_at) AS date,
-        COUNT(*) AS sales_count,
-        SUM(final_total) AS revenue
-      FROM sales
-      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-      GROUP BY DATE(created_at)
+      SELECT DATE(s.created_at) AS date, COUNT(DISTINCT s.id) AS sales_count,
+        SUM(s.final_total) - IFNULL(SUM(ret_sum.refund_amount), 0) AS revenue
+      FROM sales s
+      LEFT JOIN (
+        SELECT sale_id, SUM(refund_amount) AS refund_amount
+        FROM sale_returns GROUP BY sale_id
+      ) ret_sum ON s.id = ret_sum.sale_id
+      WHERE s.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+      GROUP BY DATE(s.created_at)
       ORDER BY date DESC
     `);
 

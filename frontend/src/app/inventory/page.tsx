@@ -295,7 +295,8 @@ export default function InventoryPage() {
   // Load from backend API on mount
   React.useEffect(() => {
     fetchProducts()
-  }, [toast])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const getStatus = (stock: number, minStock: number): Product["status"] => {
     if (stock <= 0) return "out-of-stock"
@@ -623,7 +624,7 @@ export default function InventoryPage() {
             <>
               {/* Desktop Table */}
               <div className="hidden md:block rounded-md border">
-                <div className="grid grid-cols-7 gap-4 p-4 bg-muted/50 font-medium text-sm">
+                <div className="grid grid-cols-9 gap-4 p-4 bg-muted/50 font-medium text-sm">
                   <div className="col-span-2">{t('inventory.product')}</div>
                   <div>{t('inventory.sku')}</div>
                   <div>{t('inventory.category')}</div>
@@ -634,7 +635,7 @@ export default function InventoryPage() {
                 </div>
                 <div className="divide-y">
                   {filteredProducts.map((product) => (
-                    <div key={product.id} className="grid grid-cols-7 gap-4 p-4 items-center hover:bg-muted/30 transition-colors">
+                    <div key={product.id} className="grid grid-cols-9 gap-4 p-4 items-center hover:bg-muted/30 transition-colors">
                       <div className="col-span-2">
                         <p className="font-medium">{product.name}</p>
                         <p className="text-xs text-muted-foreground">Min: {product.minStock}</p>
@@ -727,18 +728,32 @@ export default function InventoryPage() {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">
-                <Label htmlFor="sku">{t('inventory.sku')}</Label>
-                <Input id="sku" value={newProduct.sku} onChange={(e) => setNewProduct({ ...newProduct, sku: e.target.value })} placeholder={t('inventory.enterSku')} />
+                <Label htmlFor="sku">{t('inventory.sku')} <span className="text-xs text-muted-foreground">(Category se auto-generate)</span></Label>
+                <Input id="sku" value={newProduct.sku} onChange={(e) => setNewProduct({ ...newProduct, sku: e.target.value })} placeholder="Category select karo..." />
               </div>
               <div className="grid gap-2">
-                <Label htmlFor="category">{t('inventory.category')}</Label>
-                <ComboInput
-                  value={newProduct.category || ""}
-                  onChange={(value) => setNewProduct({ ...newProduct, category: value })}
-                  options={categories.filter(c => c !== "All")}
-                  placeholder="Select or type category"
-                />
+                <Label htmlFor="barcode">Barcode</Label>
+                <Input id="barcode" value={newProduct.barcode} onChange={(e) => setNewProduct({ ...newProduct, barcode: e.target.value })} placeholder="Scan or enter barcode" />
               </div>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="category">{t('inventory.category')}</Label>
+              <ComboInput
+                value={newProduct.category || ""}
+                onChange={async (value) => {
+                  setNewProduct({ ...newProduct, category: value })
+                  if (value) {
+                    try {
+                      const res = await api.get(`/products/generate-sku?category=${encodeURIComponent(value)}`)
+                      if (res.data.success) {
+                        setNewProduct(prev => ({ ...prev, category: value, sku: res.data.sku }))
+                      }
+                    } catch {}
+                  }
+                }}
+                options={categories.filter(c => c !== "All")}
+                placeholder="Select or type category"
+              />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="grid gap-2">
@@ -825,21 +840,25 @@ export default function InventoryPage() {
                   <Input value={editingProduct.sku ?? ""} onChange={(e) => setEditingProduct({ ...editingProduct, sku: e.target.value })} />
                 </div>
                 <div className="grid gap-2">
-                  <Label>Category</Label>
-                  <Select
-                    value={editingProduct.category ?? ""}
-                    onValueChange={(value) => setEditingProduct({ ...editingProduct, category: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select category" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {categories.filter(c => c !== "All").map(c => (
-                        <SelectItem key={c} value={c}>{c}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label>Barcode</Label>
+                  <Input value={editingProduct.barcode ?? ""} onChange={(e) => setEditingProduct({ ...editingProduct, barcode: e.target.value })} placeholder="Scan or enter barcode" />
                 </div>
+              </div>
+              <div className="grid gap-2">
+                <Label>Category</Label>
+                <Select
+                  value={editingProduct.category ?? ""}
+                  onValueChange={(value) => setEditingProduct({ ...editingProduct, category: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {categories.filter(c => c !== "All").map(c => (
+                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="grid gap-2">

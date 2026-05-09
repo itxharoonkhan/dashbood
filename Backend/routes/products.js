@@ -135,6 +135,95 @@ router.get('/', checkRole(['admin', 'cashier']), async (req, res) => {
 });
 
 // ===============================
+// GENERATE NEXT SKU FOR CATEGORY
+// ===============================
+router.get('/generate-sku', checkRole(['admin', 'cashier']), async (req, res) => {
+  try {
+    const { category } = req.query;
+    if (!category) return res.status(400).json({ success: false, message: "Category required" });
+
+    const prefix = category.trim().toUpperCase().substring(0, 3);
+
+    const [rows] = await db.query(
+      `SELECT sku FROM products WHERE sku LIKE ? ORDER BY sku DESC LIMIT 1`,
+      [`${prefix}%`]
+    );
+
+    let nextNumber = 1;
+    if (rows.length > 0) {
+      const lastSku = rows[0].sku;
+      const lastNum = parseInt(lastSku.replace(prefix, '')) || 0;
+      nextNumber = lastNum + 1;
+    }
+
+    const sku = `${prefix}${String(nextNumber).padStart(3, '0')}`;
+
+    res.json({ success: true, sku });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Error generating SKU" });
+  }
+});
+
+// ===============================
+// GET CATEGORIES
+// ===============================
+router.get('/categories/list', checkRole(['admin', 'cashier']), async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      "SELECT DISTINCT category FROM products"
+    );
+
+    const categories = rows.map(r => r.category);
+
+    res.json({
+      success: true,
+      data: categories
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching categories"
+    });
+  }
+});
+
+// ===============================
+// GET PRODUCT BY BARCODE
+// ===============================
+router.get('/barcode/:code', checkRole(['admin', 'cashier']), async (req, res) => {
+  try {
+    const { code } = req.params;
+
+    const [rows] = await db.query(
+      "SELECT * FROM products WHERE barcode = ? LIMIT 1",
+      [code]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found with this barcode"
+      });
+    }
+
+    res.json({
+      success: true,
+      data: rows[0]
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching product by barcode"
+    });
+  }
+});
+
+// ===============================
 // GET SINGLE PRODUCT
 // ===============================
 router.get('/:id', checkRole(['admin', 'cashier']), async (req, res) => {
@@ -367,31 +456,6 @@ router.delete('/:id', checkRole(['admin']), async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error deleting product"
-    });
-  }
-});
-
-// ===============================
-// GET CATEGORIES
-// ===============================
-router.get('/categories/list', checkRole(['admin', 'cashier']), async (req, res) => {
-  try {
-    const [rows] = await db.query(
-      "SELECT DISTINCT category FROM products"
-    );
-
-    const categories = rows.map(r => r.category);
-
-    res.json({
-      success: true,
-      data: categories
-    });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({
-      success: false,
-      message: "Error fetching categories"
     });
   }
 });

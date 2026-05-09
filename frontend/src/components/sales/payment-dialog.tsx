@@ -220,6 +220,10 @@ export function PaymentDialog({
                   <span>-Rs. {discount.toFixed(2)}</span>
                 </div>
               )}
+              <div className="flex justify-between text-purple-500">
+                <span>Donation</span>
+                <span>Rs. 1.00</span>
+              </div>
               <Separator />
               <div className="flex justify-between text-lg font-bold">
                 <span className="text-foreground">Total</span>

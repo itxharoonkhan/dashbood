@@ -27,7 +27,7 @@ api.interceptors.response.use(
 
     // Log detailed error info for debugging
     const errorMsg = responseData?.message || error.message || 'Unknown error'
-    const isExpectedError = [400, 401, 403, 422].includes(status)
+    const isExpectedError = [400, 401, 403, 404, 422].includes(status)
     
     if (isExpectedError) {
       console.warn(`⚠️ API Warning [${status}]: ${errorMsg}`)

@@ -27,6 +27,7 @@ export default function ReportsPage() {
   const [categoryData, setCategoryData] = React.useState<any[]>([])
   const [taxSummary, setTaxSummary] = React.useState<any>(null)
   const [profitLoss, setProfitLoss] = React.useState<any>(null)
+  const [returnsData, setReturnsData] = React.useState<any[]>([])
   const [loading, setLoading] = React.useState(true)
 
   // Check if user is admin
@@ -49,6 +50,9 @@ export default function ReportsPage() {
         setCategoryData(categoryDistribution || [])
         setTaxSummary(taxData || {})
         setProfitLoss(profitData || {})
+
+        const returnsRes = await api.get('/sales/returns/list').catch(() => null)
+        if (returnsRes?.data?.success) setReturnsData(returnsRes.data.data)
       } catch (err) {
         console.error('Failed to fetch reports:', err)
       } finally {
@@ -111,22 +115,116 @@ export default function ReportsPage() {
                 return sum + (parseFloat(row.order_total) || 0)
               }, 0)
               const totalItemsSold = rows.reduce((sum: number, r: any) => sum + (parseInt(r.quantity) || 0), 0)
+              const totalTax = [...new Set(rows.map((r: any) => r.sale_id))].reduce((sum: number, saleId) => {
+                const row = rows.find((r: any) => r.sale_id === saleId)
+                return sum + (parseFloat(row.tax || 0) || 0)
+              }, 0)
+              const exportDate = new Date().toLocaleDateString('en-PK', { year: 'numeric', month: 'long', day: 'numeric' })
 
               const html = `
                 <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
                 <head>
                   <meta http-equiv="content-type" content="application/vnd.ms-excel; charset=UTF-8">
                   <style>
-                    table { border-collapse: collapse; width: 100%; }
-                    th { background-color: #4CAF50; color: white; font-weight: bold; border: 1px solid #ddd; padding: 8px; }
-                    td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-                    .header { font-size: 18px; font-weight: bold; margin-bottom: 20px; }
-                    .total-row { background-color: #f0f0f0; font-weight: bold; }
-                    .grand-total-row { background-color: #4CAF50; color: white; font-weight: bold; font-size: 14px; }
+                    body { font-family: Calibri, Arial, sans-serif; font-size: 11px; }
+                    table { border-collapse: collapse; width: 100%; margin-top: 16px; }
+                    th {
+                      background-color: #1a5276;
+                      color: white;
+                      font-weight: bold;
+                      border: 1px solid #1a5276;
+                      padding: 10px 12px;
+                      text-align: center;
+                      font-size: 12px;
+                      letter-spacing: 0.5px;
+                    }
+                    td { border: 1px solid #d5d8dc; padding: 8px 12px; font-size: 11px; vertical-align: middle; }
+                    tr:nth-child(even) td { background-color: #eaf2ff; }
+                    tr:nth-child(odd) td { background-color: #ffffff; }
+                    .report-title { font-size: 22px; font-weight: bold; color: #1a5276; margin-bottom: 4px; }
+                    .report-sub  { font-size: 13px; color: #666; margin-bottom: 16px; }
+                    .summary-box { margin-top: 24px; border-collapse: collapse; width: 100%; }
+                    .summary-label {
+                      background-color: #1a5276;
+                      color: white;
+                      font-size: 15px;
+                      font-weight: bold;
+                      padding: 12px 18px;
+                      border: 2px solid #1a5276;
+                      text-align: left;
+                      width: 50%;
+                    }
+                    .summary-value {
+                      background-color: #d6eaf8;
+                      color: #1a5276;
+                      font-size: 18px;
+                      font-weight: bold;
+                      padding: 12px 18px;
+                      border: 2px solid #1a5276;
+                      text-align: right;
+                      width: 50%;
+                    }
+                    .revenue-label {
+                      background-color: #1e8449;
+                      color: white;
+                      font-size: 15px;
+                      font-weight: bold;
+                      padding: 12px 18px;
+                      border: 2px solid #1e8449;
+                      text-align: left;
+                    }
+                    .revenue-value {
+                      background-color: #d5f5e3;
+                      color: #1e8449;
+                      font-size: 20px;
+                      font-weight: bold;
+                      padding: 12px 18px;
+                      border: 2px solid #1e8449;
+                      text-align: right;
+                    }
+                    .tax-label {
+                      background-color: #7d6608;
+                      color: white;
+                      font-size: 15px;
+                      font-weight: bold;
+                      padding: 12px 18px;
+                      border: 2px solid #7d6608;
+                      text-align: left;
+                    }
+                    .tax-value {
+                      background-color: #fef9e7;
+                      color: #7d6608;
+                      font-size: 18px;
+                      font-weight: bold;
+                      padding: 12px 18px;
+                      border: 2px solid #7d6608;
+                      text-align: right;
+                    }
+                    .items-label {
+                      background-color: #6c3483;
+                      color: white;
+                      font-size: 15px;
+                      font-weight: bold;
+                      padding: 12px 18px;
+                      border: 2px solid #6c3483;
+                      text-align: left;
+                    }
+                    .items-value {
+                      background-color: #f5eef8;
+                      color: #6c3483;
+                      font-size: 18px;
+                      font-weight: bold;
+                      padding: 12px 18px;
+                      border: 2px solid #6c3483;
+                      text-align: right;
+                    }
+                    .footer-note { font-size: 10px; color: #999; margin-top: 12px; }
                   </style>
                 </head>
                 <body>
-                  <div class="header">Sales Detail Report - ${period.toUpperCase()}</div>
+                  <div class="report-title">Sales Detail Report &mdash; ${period.toUpperCase()}</div>
+                  <div class="report-sub">Generated on: ${exportDate} &nbsp;|&nbsp; Elites POS System</div>
+
                   <table>
                     <thead>
                       <tr>
@@ -139,6 +237,7 @@ export default function ReportsPage() {
                         <th>Qty</th>
                         <th>Unit Price (Rs.)</th>
                         <th>Item Total (Rs.)</th>
+                        <th>Tax (Rs.)</th>
                         <th>Order Total (Rs.)</th>
                         <th>Payment Method</th>
                         <th>Status</th>
@@ -147,38 +246,45 @@ export default function ReportsPage() {
                     <tbody>
                       ${rows.map((row: any) => `
                         <tr>
-                          <td>INV-${String(row.sale_id).padStart(6, '0')}</td>
+                          <td><b>INV-${String(row.sale_id).padStart(6, '0')}</b></td>
                           <td>${row.date}</td>
                           <td>${row.customer_name}</td>
                           <td>${row.customer_phone}</td>
                           <td>${row.product_name}</td>
                           <td>${row.product_category || '-'}</td>
-                          <td>${row.quantity}</td>
-                          <td>${parseFloat(row.unit_price).toFixed(2)}</td>
-                          <td>${parseFloat(row.item_total).toFixed(2)}</td>
-                          <td>${parseFloat(row.order_total).toFixed(2)}</td>
-                          <td>${row.payment_method}</td>
-                          <td>${row.status}</td>
+                          <td style="text-align:center;">${row.quantity}</td>
+                          <td style="text-align:right;">${parseFloat(row.unit_price).toFixed(2)}</td>
+                          <td style="text-align:right;">${parseFloat(row.item_total).toFixed(2)}</td>
+                          <td style="text-align:right;">${parseFloat(row.tax || 0).toFixed(2)}</td>
+                          <td style="text-align:right;"><b>${parseFloat(row.order_total).toFixed(2)}</b></td>
+                          <td style="text-align:center;">${row.payment_method}</td>
+                          <td style="text-align:center;">${row.status}</td>
                         </tr>
                       `).join('')}
                     </tbody>
-                    <tfoot>
-                      <tr class="total-row">
-                        <td colspan="6" style="text-align:right;">Total Items Sold:</td>
-                        <td>${totalItemsSold}</td>
-                        <td></td>
-                        <td></td>
-                        <td></td>
-                        <td></td>
-                        <td></td>
-                      </tr>
-                      <tr class="grand-total-row">
-                        <td colspan="6" style="text-align:right;">Total Orders: ${uniqueOrders}</td>
-                        <td colspan="3"></td>
-                        <td colspan="3">Total Revenue: Rs. ${totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                      </tr>
-                    </tfoot>
                   </table>
+
+                  <br/>
+                  <table class="summary-box">
+                    <tr>
+                      <td class="summary-label">📦 Total Orders</td>
+                      <td class="summary-value">${uniqueOrders}</td>
+                    </tr>
+                    <tr>
+                      <td class="items-label">🛍️ Total Items Sold</td>
+                      <td class="items-value">${totalItemsSold}</td>
+                    </tr>
+                    <tr>
+                      <td class="tax-label">🧾 Total Tax Collected</td>
+                      <td class="tax-value">Rs. ${totalTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    </tr>
+                    <tr>
+                      <td class="revenue-label">💰 Total Revenue</td>
+                      <td class="revenue-value">Rs. ${totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    </tr>
+                  </table>
+
+                  <div class="footer-note">* This report was auto-generated by Elites POS System. For internal use only.</div>
                 </body>
                 </html>
               `
@@ -210,7 +316,7 @@ export default function ReportsPage() {
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-white">Rs. {totalSales.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+            <div className="text-2xl font-bold text-foreground">Rs. {totalSales.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
             <p className="flex items-center text-xs text-muted-foreground mt-1">Total revenue earned</p>
           </CardContent>
         </Card>
@@ -220,7 +326,7 @@ export default function ReportsPage() {
             <ShoppingCart className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-white">{totalOrders}</div>
+            <div className="text-2xl font-bold text-foreground">{totalOrders}</div>
             <p className="flex items-center text-xs text-muted-foreground mt-1">Total orders processed</p>
           </CardContent>
         </Card>
@@ -230,7 +336,7 @@ export default function ReportsPage() {
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-white">{parseFloat(profitMargin).toFixed(1)}%</div>
+            <div className="text-2xl font-bold text-foreground">{parseFloat(profitMargin).toFixed(1)}%</div>
             <p className="flex items-center text-xs text-muted-foreground mt-1">Profit margin</p>
           </CardContent>
         </Card>
@@ -240,7 +346,7 @@ export default function ReportsPage() {
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-white">Rs. {avgOrderValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+            <div className="text-2xl font-bold text-foreground">Rs. {avgOrderValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
             <p className="flex items-center text-xs text-muted-foreground mt-1">Average order value</p>
           </CardContent>
         </Card>
@@ -298,7 +404,7 @@ export default function ReportsPage() {
                           style={{ height: `${height}px` }}
                         >
                           <div className="absolute -top-12 left-1/2 -translate-x-1/2 bg-card border border-white rounded-lg px-3 py-2 opacity-0 group-hover:opacity-100 transition-opacity shadow-lg whitespace-nowrap z-10">
-                            <p className="text-xs font-bold text-white">Rs. {revenue.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
+                            <p className="text-xs font-bold text-foreground">Rs. {revenue.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
                           </div>
                         </div>
                       </div>
@@ -384,6 +490,46 @@ export default function ReportsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Return History */}
+      <Card className="w-full">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ShoppingCart className="w-5 h-5 text-red-500" />
+            Return History
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {returnsData.length === 0 ? (
+            <p className="text-center text-muted-foreground py-8">Koi return nahi mila</p>
+          ) : (
+            <div className="rounded-md border border-border overflow-hidden">
+              <div className="grid grid-cols-5 gap-3 p-3 bg-muted/50 font-medium text-xs text-muted-foreground uppercase tracking-wider">
+                <div>Return #</div>
+                <div>Sale #</div>
+                <div>Customer</div>
+                <div>Date</div>
+                <div className="text-right">Refund</div>
+              </div>
+              <div className="divide-y divide-border">
+                {returnsData.map((ret: any) => (
+                  <div key={ret.id} className="grid grid-cols-5 gap-3 p-3 items-center hover:bg-muted/20 transition-colors text-sm">
+                    <div className="font-semibold text-muted-foreground">#{ret.id}</div>
+                    <div className="font-medium">Sale #{ret.sale_id}</div>
+                    <div className="text-muted-foreground truncate">{ret.customer_name || 'Walk-in'}</div>
+                    <div className="text-muted-foreground">{new Date(ret.return_date).toLocaleDateString()}</div>
+                    <div className="text-right font-bold text-red-500">-Rs. {parseFloat(ret.refund_amount).toFixed(2)}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="p-3 bg-muted/30 flex justify-between items-center text-sm font-semibold border-t border-border">
+                <span>Total Returns: {returnsData.length}</span>
+                <span className="text-red-500">Total Refunded: Rs. {returnsData.reduce((s: number, r: any) => s + parseFloat(r.refund_amount || 0), 0).toFixed(2)}</span>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
     </ProtectedRoute>
   )

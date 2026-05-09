@@ -1,3 +1,6 @@
+
+
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -29,8 +32,8 @@
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 0 0% 100%;
-    --input: 0 0% 100%;
+    --border: 240 5% 88%;
+    --input: 240 5% 88%;
     --ring: 183 100% 50%;
 
     --radius: 1rem;
@@ -47,7 +50,7 @@
     --sidebar-primary-foreground: 0 0% 100%;
     --sidebar-accent: 262 80% 65%;
     --sidebar-accent-foreground: 0 0% 100%;
-    --sidebar-border: 0 0% 100%;
+    --sidebar-border: 240 5% 88%;
     --sidebar-ring: 183 100% 50%;
   }
 
@@ -77,8 +80,8 @@
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 0 0% 100%;
-    --input: 0 0% 100%;
+    --border: 240 5% 88%;
+    --input: 240 5% 88%;
     --ring: 183 100% 65%;
 
     --radius: 1.25rem;
@@ -95,7 +98,7 @@
     --sidebar-primary-foreground: 240 20% 8%;
     --sidebar-accent: 262 80% 65%;
     --sidebar-accent-foreground: 210 40% 98%;
-    --sidebar-border: 0 0% 100%;
+    --sidebar-border: 240 5% 88%;
     --sidebar-ring: 183 100% 65%;
   }
 }
@@ -297,4 +300,33 @@ textarea:hover {
       width: 100% !important;
     }
   }
+}
+
+/* ===== Light Mode Border Fix ===== */
+/* border-white is invisible in light mode (white on white background).
+   Override to a visible light gray. Dark mode keeps its white neon borders. */
+:root:not(.dark) .border-white {
+  border-color: hsl(240 5% 88%) !important;
+}
+
+:root:not(.dark) .divide-white > * + * {
+  border-color: hsl(240 5% 88%) !important;
+}
+
+/* ===== Light Mode Card & Background Fixes ===== */
+
+/* Cards should have a subtle shadow + light background to separate from page */
+:root:not(.dark) .card,
+:root:not(.dark) [class*="Card"] {
+  box-shadow: 0 1px 4px 0 rgba(0,0,0,0.08), 0 0 0 1px hsl(240 5% 88%);
+}
+
+/* Card backgrounds need slight distinction from page in light mode */
+:root:not(.dark) {
+  --card: 0 0% 99%;
+}
+
+/* bg-card/50 and bg-muted/30 overlays — make them use a proper light shade */
+:root:not(.dark) .bg-card\/50 {
+  background-color: hsl(0 0% 97% / 0.8) !important;
 }

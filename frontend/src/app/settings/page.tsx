@@ -14,13 +14,34 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Store, Bell, CreditCard, Palette, Save, Loader2 } from "lucide-react"
+import { Store, Bell, CreditCard, Palette, Save, Loader2, Users, LockOpen, Lock, Trash2 } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { useTheme } from "@/contexts/theme-context"
 import { useToast } from "@/hooks/use-toast"
 import { useLanguage } from "@/contexts/language-context"
 import ProtectedRoute from "@/components/protected-route"
 import api from "@/lib/api"
 import { AxiosError } from "axios"
+
+interface Account {
+  id: number
+  name: string
+  email: string
+  role: string
+  failedAttempts: number
+  lockUntil: string | null
+  created_at: string
+}
 
 interface Settings {
   store_name: string
@@ -48,7 +69,7 @@ export default function SettingsPage() {
     store_email: '',
     store_gstin: '',
     currency: 'PKR',
-    tax_rate: 18,
+    tax_rate: 5,
     items_per_page: 25,
     theme: 'light',
     invoice_prefix: 'INV',
@@ -56,6 +77,64 @@ export default function SettingsPage() {
   })
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
+  const [accounts, setAccounts] = React.useState<Account[]>([])
+  const [accountsLoading, setAccountsLoading] = React.useState(false)
+  const [unlockingId, setUnlockingId] = React.useState<number | null>(null)
+  const [deletingId, setDeletingId] = React.useState<number | null>(null)
+  const [confirmDeleteId, setConfirmDeleteId] = React.useState<number | null>(null)
+  const isAdmin = typeof window !== 'undefined' && localStorage.getItem('userRole') === 'admin'
+
+  const fetchAccounts = React.useCallback(async () => {
+    setAccountsLoading(true)
+    try {
+      const res = await api.get("/auth/accounts")
+      setAccounts(res.data.data || [])
+    } catch (err) {
+      console.error("Failed to fetch accounts", err)
+    } finally {
+      setAccountsLoading(false)
+    }
+  }, [])
+
+  const handleUnlock = async (id: number) => {
+    setUnlockingId(id)
+    try {
+      await api.put(`/auth/unlock/${id}`)
+      toast({ title: "Account Unlocked", description: "Account has been successfully unlocked." })
+      fetchAccounts()
+    } catch (err) {
+      toast({ title: "Error", description: "Failed to unlock account.", variant: "destructive" })
+    } finally {
+      setUnlockingId(null)
+    }
+  }
+
+  const handleDelete = async (id: number) => {
+    setDeletingId(id)
+    try {
+      await api.delete(`/auth/accounts/${id}`)
+      toast({ title: "Account Deleted", description: "Account has been permanently deleted." })
+      setConfirmDeleteId(null)
+      fetchAccounts()
+    } catch (err) {
+      const error = err as AxiosError<{ message?: string }>
+      toast({ title: "Error", description: error.response?.data?.message || "Failed to delete account.", variant: "destructive" })
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  const getLockStatus = (account: Account) => {
+    if (!account.lockUntil) return null
+    const lockTime = new Date(account.lockUntil)
+    const now = new Date()
+    if (lockTime > now) {
+      const remainingMins = Math.ceil((lockTime.getTime() - now.getTime()) / 60000)
+      return remainingMins
+    }
+    return null
+  }
+
   // Check if user is admin
   React.useEffect(() => {
     const role = localStorage.getItem('userRole')
@@ -64,6 +143,10 @@ export default function SettingsPage() {
       router.replace('/dashboard')
     }
   }, [router])
+
+  React.useEffect(() => {
+    if (isAdmin) fetchAccounts()
+  }, [isAdmin, fetchAccounts])
 
   React.useEffect(() => {
     const fetchSettings = async () => {
@@ -77,7 +160,7 @@ export default function SettingsPage() {
           store_email: raw.store_email || '',
           store_gstin: raw.store_gstin || '',
           currency: raw.currency || 'PKR',
-          tax_rate: raw.tax_rate || 18,
+          tax_rate: parseInt(raw.tax_rate) || 5,
           items_per_page: raw.items_per_page || 25,
           theme: raw.theme || 'light',
           invoice_prefix: raw.invoice_prefix || 'INV',
@@ -260,17 +343,24 @@ export default function SettingsPage() {
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">{t('settings.taxRate')}</label>
-              <Select value={(settings.tax_rate ?? 18).toString()} onValueChange={(v) => updateSetting("tax_rate", parseInt(v))}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="5">5%</SelectItem>
-                  <SelectItem value="12">12%</SelectItem>
-                  <SelectItem value="18">18%</SelectItem>
-                  <SelectItem value="28">28%</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="relative">
+                <Input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.5"
+                  value={settings.tax_rate ?? 5}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value)
+                    if (!isNaN(val) && val >= 0 && val <= 100) {
+                      updateSetting("tax_rate", val)
+                    }
+                  }}
+                  className="pr-10"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground font-medium">%</span>
+              </div>
+              <p className="text-xs text-muted-foreground">0% se 100% tak koi bhi value enter karein (e.g. 3, 5, 7.5)</p>
             </div>
           </CardContent>
         </Card>
@@ -315,6 +405,132 @@ export default function SettingsPage() {
         </Card>
 
       </div>
+
+      {isAdmin && (
+        <Card>
+          <CardHeader>
+            <Users className="w-5 h-5 text-primary mb-2" />
+            <CardTitle>Account Management</CardTitle>
+            <CardDescription>
+              All registered accounts — {accounts.length} total
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {accountsLoading ? (
+              <div className="space-y-3">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="h-12 bg-muted rounded animate-pulse" />
+                ))}
+              </div>
+            ) : accounts.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">No accounts found.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="text-left py-2 px-3 font-medium text-muted-foreground">Name</th>
+                      <th className="text-left py-2 px-3 font-medium text-muted-foreground">Email</th>
+                      <th className="text-left py-2 px-3 font-medium text-muted-foreground">Role</th>
+                      <th className="text-left py-2 px-3 font-medium text-muted-foreground">Status</th>
+                      <th className="text-left py-2 px-3 font-medium text-muted-foreground">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {accounts.map((account) => {
+                      const lockedMins = getLockStatus(account)
+                      const isLocked = lockedMins !== null
+                      return (
+                        <tr key={account.id} className="border-b last:border-0 hover:bg-muted/30">
+                          <td className="py-3 px-3 font-medium">{account.name}</td>
+                          <td className="py-3 px-3 text-muted-foreground">{account.email}</td>
+                          <td className="py-3 px-3">
+                            <Badge variant={account.role === 'admin' ? 'default' : 'secondary'}>
+                              {account.role}
+                            </Badge>
+                          </td>
+                          <td className="py-3 px-3">
+                            {isLocked ? (
+                              <div className="flex items-center gap-1 text-destructive">
+                                <Lock className="w-3 h-3" />
+                                <span className="text-xs">Locked ({lockedMins} min left)</span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1 text-green-600">
+                                <LockOpen className="w-3 h-3" />
+                                <span className="text-xs">Active</span>
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3 px-3">
+                            <div className="flex items-center gap-2">
+                              {isLocked && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-xs gap-1"
+                                  onClick={() => handleUnlock(account.id)}
+                                  disabled={unlockingId === account.id}
+                                >
+                                  {unlockingId === account.id ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <LockOpen className="w-3 h-3" />
+                                  )}
+                                  Unlock
+                                </Button>
+                              )}
+                              {account.email !== 'admin@elites.com' && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 text-xs gap-1 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                  onClick={() => setConfirmDeleteId(account.id)}
+                                  disabled={deletingId === account.id}
+                                >
+                                  {deletingId === account.id ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="w-3 h-3" />
+                                  )}
+                                  Delete
+                                </Button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground mt-4">
+              * Passwords are securely encrypted and cannot be displayed.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      <AlertDialog open={confirmDeleteId !== null} onOpenChange={(open) => { if (!open) setConfirmDeleteId(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Account Delete Karna Chahte Hain?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Yeh action permanent hai. Account database se hamesha ke liye delete ho jayega aur wapas nahi aa sakta.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+              onClick={() => confirmDeleteId !== null && handleDelete(confirmDeleteId)}
+            >
+              Haan, Delete Karo
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="flex flex-col sm:flex-row justify-end gap-2">
         <Button className="gap-2 w-full sm:w-auto" onClick={handleSaveChanges} disabled={saving}>
