@@ -41,7 +41,7 @@ app.use(cors({
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
@@ -86,6 +86,13 @@ app.use('/api/reports', require('./routes/reports'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/menu', require('./routes/menu'));
 app.use('/api/shifts', require('./routes/shifts'));
+app.use('/api/coupons', require('./routes/coupons'));
+app.use('/api/loyalty', require('./routes/loyalty'));
+app.use('/api/suppliers', require('./routes/suppliers'));
+app.use('/api/notifications', require('./routes/notifications'));
+app.use('/api/tables', require('./routes/tables'));
+app.use('/api/orders', require('./routes/orders'));
+app.use('/api/kitchen', require('./routes/kitchen'));
 
 // ===============================
 // ROOT
@@ -116,8 +123,31 @@ app.use(require('./middleware/errorMiddleware'));
 // ===============================
 // SERVER START
 // ===============================
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`❌ Port ${PORT} already in use. Killing old process...`);
+    const { execSync } = require('child_process');
+    try {
+      if (process.platform === 'win32') {
+        execSync(`for /f "tokens=5" %a in ('netstat -ano ^| findstr :${PORT}') do taskkill /F /PID %a`, { shell: 'cmd' });
+      } else {
+        execSync(`lsof -ti:${PORT} | xargs kill -9`);
+      }
+      console.log(`✅ Old process killed. Restarting...`);
+      setTimeout(() => {
+        server.listen(PORT);
+      }, 1000);
+    } catch (e) {
+      console.error('Could not kill old process. Please restart manually.');
+      process.exit(1);
+    }
+  } else {
+    throw err;
+  }
 });
 
 // ✅ Graceful shutdown

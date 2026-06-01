@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Search, Plus, Edit, Trash2, AlertTriangle, Package, TrendingUp, TrendingDown, PackagePlus, Upload, Download, X, Loader2, ChevronDown } from "lucide-react"
+import { Search, Plus, Edit, Trash2, AlertTriangle, Package, TrendingUp, TrendingDown, PackagePlus, Upload, Download, X, Loader2, ChevronDown, Printer } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -156,6 +156,8 @@ export default function InventoryPage() {
   const [isAddOpen, setIsAddOpen] = React.useState(false)
 
   const [editingProduct, setEditingProduct] = React.useState<Product | null>(null)
+  const [labelProduct, setLabelProduct] = React.useState<Product | null>(null)
+  const [labelQty, setLabelQty] = React.useState(1)
   const [restockingProduct, setRestockingProduct] = React.useState<Product | null>(null)
   const [restockQuantity, setRestockQuantity] = React.useState(0)
   const [loading, setLoading] = React.useState(true)
@@ -185,6 +187,10 @@ export default function InventoryPage() {
   const [saving, setSaving] = React.useState(false)
   const [isImporting, setIsImporting] = React.useState(false)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
+
+  // Variants state
+  const [editVariants, setEditVariants] = React.useState<{ name: string; price: string }[]>([])
+  const [addVariants, setAddVariants] = React.useState<{ name: string; price: string }[]>([])
 
   const fetchProducts = async () => {
     try {
@@ -365,15 +371,17 @@ export default function InventoryPage() {
       if (product.category && !categories.includes(product.category)) {
         setCategories(prev => [...prev, product.category])
       }
+      // Save variants for new product
+      const validNewVariants = addVariants.filter(v => v.name.trim())
+      if (validNewVariants.length > 0) {
+        await api.post(`/products/${backendProduct.id}/variants`, { variants: validNewVariants })
+      }
+
       setIsAddOpen(false)
       setNewProduct({ name: "", category: "", price: 0, costPrice: 0, stock: 0, minStock: 10, sku: "", barcode: "", description: "", unitType: "pcs", image: "" })
-      setNumInputs({
-        price: "0",
-        costPrice: "0",
-        stock: "0",
-        minStock: "10"
-      })
+      setNumInputs({ price: "0", costPrice: "0", stock: "0", minStock: "10" })
       setProductImage("")
+      setAddVariants([])
       toast({ title: "Product added", description: `${product.name} has been added to inventory.` })
     } catch (err) {
       const error = err as AxiosError<{ message?: string }>
@@ -409,6 +417,17 @@ export default function InventoryPage() {
   const removeImage = () => {
     setProductImage("")
     setNewProduct(prev => ({ ...prev, image: "" }))
+  }
+
+  const openEditWithVariants = async (product: Product) => {
+    setEditingProduct(product)
+    try {
+      const res = await api.get(`/products/${product.id}/variants`)
+      const vars = (res.data.data || []).map((v: any) => ({ name: v.name, price: v.price.toString() }))
+      setEditVariants(vars)
+    } catch {
+      setEditVariants([])
+    }
   }
 
   const handleUpdateProduct = async () => {
@@ -448,8 +467,13 @@ export default function InventoryPage() {
             }
           : p
       )
+      // Save variants
+      const validVariants = editVariants.filter(v => v.name.trim())
+      await api.post(`/products/${editingProduct.id}/variants`, { variants: validVariants })
+
       setProducts(updated)
       setEditingProduct(null)
+      setEditVariants([])
       toast({ title: "Product updated", description: `${backendProduct.name} has been updated.` })
     } catch (err) {
       const error = err as AxiosError<{ message?: string }>
@@ -457,6 +481,67 @@ export default function InventoryPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const printLabels = (product: Product, qty: number) => {
+    const barcodeValue = product.barcode || product.sku || `ITEM-${product.id}`
+    const labels = Array(qty).fill(null).map((_, i) => `
+      <div class="label">
+        <div class="name">${product.name}</div>
+        <svg class="barcode" id="bc-${i}"></svg>
+        <div class="price">Rs. ${Number(product.price).toLocaleString()}</div>
+      </div>`).join('')
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <title>Labels - ${product.name}</title>
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family: monospace; background:#fff; }
+    .grid { display:flex; flex-wrap:wrap; gap:4mm; padding:5mm; }
+    .label {
+      width:5cm; height:3cm;
+      border:1px solid #ccc;
+      display:flex; flex-direction:column;
+      align-items:center; justify-content:center;
+      padding:2mm; text-align:center;
+      page-break-inside:avoid;
+    }
+    .name  { font-size:9pt; font-weight:bold; margin-bottom:1mm; max-width:100%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+    .barcode { width:100%; height:auto; max-height:1.4cm; }
+    .price { font-size:8pt; font-weight:bold; margin-top:1mm; }
+    @media print {
+      @page { size:A4; margin:5mm; }
+      body { background:#fff; }
+    }
+  </style>
+</head>
+<body>
+  <div class="grid">${labels}</div>
+  <script>
+    window.onload = function() {
+      document.querySelectorAll('.barcode').forEach(function(el) {
+        try {
+          JsBarcode(el, '${barcodeValue}', {
+            format:'CODE128', width:1.5, height:35,
+            displayValue:true, fontSize:9, margin:2
+          })
+        } catch(e) {
+          el.outerHTML = '<div style="font-size:7pt;color:#999">No Barcode</div>'
+        }
+      })
+      setTimeout(function(){ window.print() }, 500)
+    }
+  <\/script>
+</body>
+</html>`
+
+    const w = window.open('', '_blank', 'width=800,height=600')
+    if (!w) return
+    w.document.write(html)
+    w.document.close()
   }
 
   const handleDeleteProduct = async (id: string, name: string) => {
@@ -656,8 +741,11 @@ export default function InventoryPage() {
                             <PackagePlus className="w-4 h-4" /><span className="ml-1">{t('inventory.restock')}</span>
                           </Button>
                         ) : (
-                          <Button variant="outline" size="sm" onClick={() => setEditingProduct(product)}><Edit className="w-4 h-4" /></Button>
+                          <Button variant="outline" size="sm" onClick={() => openEditWithVariants(product)}><Edit className="w-4 h-4" /></Button>
                         )}
+                        <Button variant="outline" size="sm" onClick={() => { setLabelProduct(product); setLabelQty(1) }} title="Print Label">
+                          <Printer className="w-4 h-4" />
+                        </Button>
                         <Button variant="outline" size="sm" onClick={() => handleDeleteProduct(product.id, product.name)} className="text-red-500 hover:text-red-600"><Trash2 className="w-4 h-4" /></Button>
                       </div>
                     </div>
@@ -700,8 +788,11 @@ export default function InventoryPage() {
                               <PackagePlus className="w-4 h-4" /><span className="ml-1">{t('inventory.restock')}</span>
                             </Button>
                           ) : (
-                            <Button variant="outline" size="sm" onClick={() => setEditingProduct(product)}><Edit className="w-4 h-4" /><span className="ml-1">{t('inventory.edit')}</span></Button>
+                            <Button variant="outline" size="sm" onClick={() => openEditWithVariants(product)}><Edit className="w-4 h-4" /><span className="ml-1">{t('inventory.edit')}</span></Button>
                           )}
+                          <Button variant="outline" size="sm" onClick={() => { setLabelProduct(product); setLabelQty(1) }}>
+                            <Printer className="w-4 h-4" /><span className="ml-1">Label</span>
+                          </Button>
                           <Button variant="outline" size="sm" onClick={() => handleDeleteProduct(product.id, product.name)} className="text-red-500 hover:text-red-600"><Trash2 className="w-4 h-4" /><span className="ml-1">{t('inventory.delete')}</span></Button>
                         </div>
                       </div>
@@ -716,11 +807,12 @@ export default function InventoryPage() {
 
       {/* Add Product Dialog */}
       <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-h-[unset]">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col">
+          <DialogHeader className="shrink-0">
             <DialogTitle>{t('inventory.addNewProduct')}</DialogTitle>
             <DialogDescription>{t('inventory.enterProductDetails')}</DialogDescription>
           </DialogHeader>
+          <div className="flex-1 overflow-y-auto pr-1">
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
               <Label htmlFor="name">{t('inventory.productName')}</Label>
@@ -785,6 +877,46 @@ export default function InventoryPage() {
               </div>
             </div>
 
+            {/* Variants */}
+            <div className="grid gap-2">
+              <div className="flex items-center justify-between">
+                <Label>Variants <span className="text-xs text-muted-foreground">(e.g. Small, Medium, Large)</span></Label>
+                <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => setAddVariants(p => [...p, { name: "", price: "" }])}>
+                  + Add Variant
+                </Button>
+              </div>
+              {addVariants.length > 0 && (
+                <div className="rounded-lg border border-white overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/30">
+                      <tr>
+                        <th className="text-left p-2 font-medium text-muted-foreground">Variant Name</th>
+                        <th className="text-left p-2 font-medium text-muted-foreground w-28">Price (Rs.)</th>
+                        <th className="w-8"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {addVariants.map((v, i) => (
+                        <tr key={i} className="border-t border-white">
+                          <td className="p-1.5">
+                            <Input placeholder="e.g. Small" className="h-8" value={v.name} onChange={e => setAddVariants(p => p.map((r, idx) => idx === i ? { ...r, name: e.target.value } : r))} />
+                          </td>
+                          <td className="p-1.5">
+                            <Input type="number" min="0" step="0.01" placeholder="0.00" className="h-8" value={v.price} onChange={e => setAddVariants(p => p.map((r, idx) => idx === i ? { ...r, price: e.target.value } : r))} />
+                          </td>
+                          <td className="p-1.5">
+                            <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => setAddVariants(p => p.filter((_, idx) => idx !== i))}>
+                              <X className="w-3.5 h-3.5 text-destructive" />
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
             {/* Image Upload */}
             <div className="grid gap-2">
               <div className="flex items-center justify-between">
@@ -812,7 +944,8 @@ export default function InventoryPage() {
               )}
             </div>
           </div>
-          <DialogFooter className="gap-2 sm:gap-0">
+          </div>
+          <DialogFooter className="shrink-0 gap-2 sm:gap-0 pt-2 border-t border-white">
             <Button variant="outline" onClick={() => setIsAddOpen(false)} disabled={saving} className="w-full sm:w-auto">{t('inventory.cancel')}</Button>
             <Button onClick={handleAddProduct} disabled={saving} className="w-full sm:w-auto">
               {saving ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Adding...</> : t('inventory.add')}
@@ -823,12 +956,13 @@ export default function InventoryPage() {
 
       {/* Edit Product Dialog */}
       <Dialog open={!!editingProduct} onOpenChange={() => setEditingProduct(null)}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-h-[unset]">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col">
+          <DialogHeader className="shrink-0">
             <DialogTitle>{t('inventory.editProduct')}</DialogTitle>
             <DialogDescription>{t('inventory.updateProduct')}</DialogDescription>
           </DialogHeader>
           {editingProduct && (
+            <div className="flex-1 overflow-y-auto pr-1">
             <div className="grid gap-4 py-4">
               <div className="grid gap-2">
                 <Label>Product Name</Label>
@@ -896,9 +1030,50 @@ export default function InventoryPage() {
                   </Select>
                 </div>
               </div>
+
+              {/* Variants */}
+              <div className="grid gap-2 mt-2">
+                <div className="flex items-center justify-between">
+                  <Label>Variants <span className="text-xs text-muted-foreground">(e.g. Small, Medium, Large)</span></Label>
+                  <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditVariants(p => [...p, { name: "", price: "" }])}>
+                    + Add Variant
+                  </Button>
+                </div>
+                {editVariants.length > 0 && (
+                  <div className="rounded-lg border border-white overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/30">
+                        <tr>
+                          <th className="text-left p-2 font-medium text-muted-foreground">Variant Name</th>
+                          <th className="text-left p-2 font-medium text-muted-foreground w-28">Price (Rs.)</th>
+                          <th className="w-8"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {editVariants.map((v, i) => (
+                          <tr key={i} className="border-t border-white">
+                            <td className="p-1.5">
+                              <Input placeholder="e.g. Medium" className="h-8" value={v.name} onChange={e => setEditVariants(p => p.map((r, idx) => idx === i ? { ...r, name: e.target.value } : r))} />
+                            </td>
+                            <td className="p-1.5">
+                              <Input type="number" min="0" step="0.01" placeholder="0.00" className="h-8" value={v.price} onChange={e => setEditVariants(p => p.map((r, idx) => idx === i ? { ...r, price: e.target.value } : r))} />
+                            </td>
+                            <td className="p-1.5">
+                              <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => setEditVariants(p => p.filter((_, idx) => idx !== i))}>
+                                <X className="w-3.5 h-3.5 text-destructive" />
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
             </div>
           )}
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="shrink-0 gap-2 sm:gap-0 pt-2 border-t border-white">
             <Button variant="outline" onClick={() => setEditingProduct(null)} disabled={saving} className="w-full sm:w-auto">{t('inventory.cancel')}</Button>
             <Button onClick={handleUpdateProduct} disabled={saving} className="w-full sm:w-auto">
               {saving ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Updating...</> : t('inventory.update')}
@@ -1053,6 +1228,52 @@ export default function InventoryPage() {
         </DialogContent>
       </Dialog>
     </div>
+
+      {/* Print Label Dialog */}
+      <Dialog open={!!labelProduct} onOpenChange={() => setLabelProduct(null)}>
+        <DialogContent className="sm:max-w-xs">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Printer className="w-5 h-5 text-primary" />
+              Print Barcode Label
+            </DialogTitle>
+            <DialogDescription>
+              <span className="font-semibold">{labelProduct?.name}</span>
+              {' — '}Barcode: {labelProduct?.barcode || labelProduct?.sku || `ITEM-${labelProduct?.id}`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <div className="space-y-2">
+              <Label>Copies (Kitne Labels Print Karne Hain)</Label>
+              <div className="flex items-center gap-3">
+                <Button variant="outline" size="icon" className="h-9 w-9"
+                  onClick={() => setLabelQty(q => Math.max(1, q - 1))}>−</Button>
+                <Input
+                  type="number" min={1} max={50}
+                  className="h-9 text-center font-bold text-lg w-20"
+                  value={labelQty}
+                  onChange={e => setLabelQty(Math.min(50, Math.max(1, parseInt(e.target.value) || 1)))}
+                />
+                <Button variant="outline" size="icon" className="h-9 w-9"
+                  onClick={() => setLabelQty(q => Math.min(50, q + 1))}>+</Button>
+              </div>
+            </div>
+            <div className="bg-muted/40 rounded-lg p-3 text-xs text-muted-foreground space-y-1">
+              <div>Label size: 5cm × 3cm</div>
+              <div>Format: CODE128</div>
+              <div>Layout: 3 per row (A4)</div>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setLabelProduct(null)}>Cancel</Button>
+            <Button onClick={() => { if (labelProduct) { printLabels(labelProduct, labelQty); setLabelProduct(null) } }}>
+              <Printer className="w-4 h-4 mr-1" />
+              Print {labelQty} Label{labelQty > 1 ? 's' : ''}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </>
     </ProtectedRoute>
   )

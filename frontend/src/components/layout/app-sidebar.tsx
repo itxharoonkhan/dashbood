@@ -21,6 +21,11 @@ import {
   Eye,
   EyeOff,
   Clock,
+  Tag,
+  Truck,
+  Receipt,
+  ChefHat,
+  UtensilsCrossed,
 } from "lucide-react"
 
 import {
@@ -68,16 +73,41 @@ import { useRouter } from "next/navigation"
 export function AppSidebar() {
   const router = useRouter()
   const pathname = usePathname()
-  const { setOpenMobile } = useSidebar()
+  const { setOpenMobile, state } = useSidebar()
+  const isCollapsed = state === "collapsed"
   const { language, setLanguage, t, isRTL } = useLanguage()
   const { logout } = useAuth()
   const { toast } = useToast()
   const [userRole, setUserRole] = React.useState<string>("admin")
+  const [posMode, setPosMode] = React.useState<string>("retail")
 
-  // Load user role from localStorage on mount
+  const scrollDivRef = React.useRef<HTMLDivElement>(null)
+
+  const saveScroll = React.useCallback(() => {
+    if (scrollDivRef.current) {
+      sessionStorage.setItem('sidebarScroll', String(scrollDivRef.current.scrollTop))
+    }
+  }, [])
+
+  // Mount pe restore karo
+  React.useEffect(() => {
+    const saved = sessionStorage.getItem('sidebarScroll')
+    if (!saved) return
+    const pos = parseInt(saved)
+    // Double restore — pehle immediate, phir timeout ke baad
+    if (scrollDivRef.current) scrollDivRef.current.scrollTop = pos
+    const t = setTimeout(() => {
+      if (scrollDivRef.current) scrollDivRef.current.scrollTop = pos
+    }, 50)
+    return () => clearTimeout(t)
+  }, [])
+
+  // Load user role and posMode from localStorage on mount
   React.useEffect(() => {
     const role = localStorage.getItem('userRole') || 'admin'
     setUserRole(role)
+    const mode = localStorage.getItem('posMode') || 'retail'
+    setPosMode(mode)
   }, [])
 
   // Create User Dialog State
@@ -100,6 +130,8 @@ export function AppSidebar() {
     { id: "inventory", label: "Inventory" },
     { id: "customers", label: "Customers" },
     { id: "reports", label: "Reports" },
+    { id: "coupons", label: "Coupons" },
+    { id: "suppliers", label: "Suppliers" },
     { id: "settings", label: "Settings" },
   ]
 
@@ -157,26 +189,66 @@ export function AppSidebar() {
       permission: 'reports'
     },
     {
+      title: "Coupons",
+      url: "/coupons",
+      icon: Tag,
+      roles: ['admin'],
+      permission: 'coupons'
+    },
+    {
+      title: "Suppliers",
+      url: "/suppliers",
+      icon: Truck,
+      roles: ['admin'],
+      permission: 'suppliers'
+    },
+    {
       title: t('nav.settings'),
       url: "/settings",
       icon: Settings,
       roles: ['admin', 'cashier'],
       permission: 'settings'
     },
+    {
+      title: "Receipt Settings",
+      url: "/receipt-settings",
+      icon: Receipt,
+      roles: ['admin'],
+      permission: 'settings'
+    },
+    {
+      title: "Tables",
+      url: "/tables",
+      icon: UtensilsCrossed,
+      roles: ['admin', 'cashier'],
+      permission: 'sales',
+      restaurantOnly: true,
+    },
+    {
+      title: "Kitchen",
+      url: "/kitchen",
+      icon: ChefHat,
+      roles: ['admin', 'cashier'],
+      permission: 'sales',
+      restaurantOnly: true,
+    },
   ]
 
-  // Filter items based on user role AND permissions
-  const items = allItems.filter(item => {
-    // Admin has access to everything
+  // Filter items based on user role, permissions, and posMode
+  const items = allItems.filter((item: any) => {
+    // Hide restaurant-only items when in retail mode
+    if (item.restaurantOnly && posMode !== 'restaurant') return false;
+
+    // Admin has access to everything (except mode-gated items above)
     if (userRole === 'admin') return true;
-    
+
     // Check if role is allowed
     const roleAllowed = item.roles.includes(userRole);
-    
+
     // Check if user has specific permission for this page
     const userPermissions = JSON.parse(localStorage.getItem('userPermissions') || '[]');
     const hasPermission = userPermissions.includes(item.permission);
-    
+
     return roleAllowed && hasPermission;
   })
 
@@ -188,7 +260,7 @@ export function AppSidebar() {
     { label: "One symbol (!@#$%^&*)",      test: (p: string) => /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(p) },
   ]
 
-  const isEmailValid = (email: string) => /^[^\s@]+@[^\s@]+\.(com|org)$/i.test(email)
+  const isEmailValid = (email: string) => /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -205,7 +277,7 @@ export function AppSidebar() {
     if (!isEmailValid(cashierData.email)) {
       toast({
         title: "Invalid Email",
-        description: "Email must end with .com or .org (e.g. user@example.com)",
+        description: "Please enter a valid email address (e.g. user@example.com)",
         variant: "destructive"
       })
       return
@@ -271,30 +343,40 @@ export function AppSidebar() {
     <Sidebar collapsible="icon">
 
       <SidebarHeader className="h-16 flex items-center justify-center border-b">
-        <div className="flex items-center gap-3">
-          <div className="w-auto h-8 rounded flex items-center justify-center overflow-hidden">
-            <img src="/Logoo.png" alt="Software Elites" className="w-full h-full object-cover" />
+        {isCollapsed ? (
+          <div className="w-8 h-8 rounded overflow-hidden flex items-center justify-center">
+            <img src="/Logoo.png" alt="SE" className="w-full h-full object-contain" />
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center gap-2 px-2">
+            <img src="/Logoo.png" alt="Software Elites" className="h-9 w-auto object-contain" />
+          </div>
+        )}
       </SidebarHeader>
-      <SidebarContent className="pt-4">
-        <SidebarMenu className="space-y-4">
-          {items.map((item) => (
-            <SidebarMenuItem key={item.title}>
-              <SidebarMenuButton
-                asChild
-                isActive={pathname === item.url}
-                tooltip={item.title}
-                className="py-5"
-              >
-                <Link href={item.url}>
-                  {(() => { const Icon = item.icon; return <Icon />; })()}
-                  <span>{item.title}</span>
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))}
-        </SidebarMenu>
+      <SidebarContent>
+        <div
+          ref={scrollDivRef}
+          onScroll={saveScroll}
+          style={{ overflowY: 'auto', height: '100%', paddingTop: '16px' }}
+        >
+          <SidebarMenu className="space-y-4">
+            {items.map((item) => (
+              <SidebarMenuItem key={item.title}>
+                <SidebarMenuButton
+                  asChild
+                  isActive={pathname === item.url}
+                  tooltip={item.title}
+                  className="py-5"
+                >
+                  <Link href={item.url} onClick={saveScroll}>
+                    {(() => { const Icon = item.icon; return <Icon />; })()}
+                    <span>{item.title}</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            ))}
+          </SidebarMenu>
+        </div>
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu>

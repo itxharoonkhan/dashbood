@@ -43,9 +43,14 @@ router.get('/all', checkRole(['admin', 'cashier']), async (req, res) => {
       `),
       db.query(`
         SELECT s.id, s.final_total AS grand_total, s.payment_method, s.created_at AS sale_date,
-               c.name AS customer_name
-        FROM sales s LEFT JOIN customers c ON s.customer_id = c.id
+               s.table_name,
+               c.name AS customer_name,
+               GROUP_CONCAT(CONCAT(sp.method, ':', ROUND(sp.amount, 2)) ORDER BY sp.id SEPARATOR '|') AS split_breakdown
+        FROM sales s
+        LEFT JOIN customers c ON s.customer_id = c.id
+        LEFT JOIN sale_payments sp ON s.id = sp.sale_id
         WHERE s.status != 'cancelled' AND DATE(s.created_at) = CURDATE()
+        GROUP BY s.id, s.final_total, s.payment_method, s.created_at, s.table_name, c.name
         ORDER BY s.id DESC
       `),
       db.query(`
@@ -134,9 +139,11 @@ router.get('/recent-sales', checkRole(['admin', 'cashier']), async (req, res) =>
         s.final_total AS grand_total,
         s.payment_method,
         s.created_at AS sale_date,
+        s.table_name,
         c.name AS customer_name
       FROM sales s
       LEFT JOIN customers c ON s.customer_id = c.id
+      WHERE s.status != 'cancelled'
       ORDER BY s.id DESC
       LIMIT 5
     `);

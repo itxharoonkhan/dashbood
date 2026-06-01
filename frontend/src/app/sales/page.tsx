@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Image from "next/image"
-import { Search, Minus, Plus, Trash2, ShoppingCart, Bell, Settings, LogOut, Printer, ChevronDown, ChevronUp, Globe, ScanLine } from "lucide-react"
+import { Search, Minus, Plus, Trash2, ShoppingCart, Bell, Settings, LogOut, Printer, ChevronDown, ChevronUp, Globe, ScanLine, Camera } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
@@ -16,6 +16,7 @@ import { useRouter } from "next/navigation"
 import ProtectedRoute from "@/components/protected-route"
 import { PaymentDialog } from "@/components/sales/payment-dialog"
 import { ReceiptPrintDialog } from "@/components/sales/receipt-print-dialog"
+import { CameraScanner } from "@/components/sales/camera-scanner"
 import api from "@/lib/api"
 
 interface CartItem {
@@ -24,6 +25,22 @@ interface CartItem {
   price: number
   quantity: number
   category: string
+  variantId?: number
+  variantName?: string
+}
+
+interface ProductVariant {
+  id: number
+  name: string
+  price: number
+}
+
+interface AppliedCoupon {
+  id: number
+  code: string
+  type: "flat" | "percentage"
+  value: number
+  discount: number
 }
 
 interface OrderData {
@@ -37,6 +54,10 @@ interface OrderData {
   customerName?: string
   customerPhone?: string
   orderTime?: Date
+  couponDiscount?: number
+  couponCode?: string
+  loyaltyDiscount?: number
+  splitPayments?: { method: string; amount: number }[]
 }
 
 interface MenuItem {
@@ -46,6 +67,8 @@ interface MenuItem {
   price: number
   stock: number
   img: string
+  has_variants: boolean
+  variants: ProductVariant[]
 }
 
 // Categories will be dynamic
@@ -75,19 +98,30 @@ export default function POSPage() {
   const [showAddedPopup, setShowAddedPopup] = React.useState(false)
   const [lastAddedItem, setLastAddedItem] = React.useState("")
   const [taxRate, setTaxRate] = React.useState(5)
+  const [invoicePrefix, setInvoicePrefix] = React.useState('INV')
   const [barcodeInput, setBarcodeInput] = React.useState("")
   const [barcodeLoading, setBarcodeLoading] = React.useState(false)
   const barcodeRef = React.useRef<HTMLInputElement>(null)
+  const searchRef  = React.useRef<HTMLInputElement>(null)
+  const [isCameraOpen, setIsCameraOpen] = React.useState(false)
 
-  // Fetch settings (tax rate) from API
+  // Selected cart item for +/- shortcuts
+  const [selectedCartId, setSelectedCartId] = React.useState<string | null>(null)
+
+  // Variant selection
+  const [variantProduct, setVariantProduct] = React.useState<MenuItem | null>(null)
+  const [isVariantOpen, setIsVariantOpen] = React.useState(false)
+
+  // Fetch settings (tax rate + invoice prefix) from API
   React.useEffect(() => {
     const fetchSettings = async () => {
       try {
         const res = await api.get('/settings')
         const raw = res.data.data || res.data.settings || {}
         if (raw.tax_rate) setTaxRate(parseInt(raw.tax_rate) || 5)
+        if (raw.invoice_prefix) setInvoicePrefix(raw.invoice_prefix)
       } catch {
-        // fallback to default 5%
+        // fallback to defaults
       }
     }
     fetchSettings()
@@ -165,6 +199,65 @@ export default function POSPage() {
     }
   }
 
+  // ─── Keyboard Shortcuts ──────────────────────────────────────────────────────
+  React.useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName
+      const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+
+      // F2 — Search bar focus
+      if (e.key === 'F2') {
+        e.preventDefault()
+        searchRef.current?.focus()
+        return
+      }
+
+      // F4 — Payment dialog open (cart mein items hon toh)
+      if (e.key === 'F4') {
+        e.preventDefault()
+        if (!isPaymentOpen && cart.length > 0) setIsPaymentOpen(true)
+        return
+      }
+
+      // Esc — Dialog band karo ya cart clear karo
+      if (e.key === 'Escape') {
+        if (isPaymentOpen) { setIsPaymentOpen(false); return }
+        if (isVariantOpen) { setIsVariantOpen(false); return }
+        if (selectedCartId)  { setSelectedCartId(null); return }
+        return
+      }
+
+      // + / = — selected item ki quantity badhaao
+      if ((e.key === '+' || e.key === '=') && !isTyping && selectedCartId) {
+        e.preventDefault()
+        updateQuantity(selectedCartId, 1)
+        return
+      }
+
+      // - — selected item ki quantity ghataao
+      if (e.key === '-' && !isTyping && selectedCartId) {
+        e.preventDefault()
+        updateQuantity(selectedCartId, -1)
+        return
+      }
+
+      // Arrow Up / Down — cart mein item select karo
+      if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !isTyping && cart.length > 0) {
+        e.preventDefault()
+        const idx = selectedCartId ? cart.findIndex(i => i.id === selectedCartId) : -1
+        if (e.key === 'ArrowDown') {
+          setSelectedCartId(cart[Math.min(idx + 1, cart.length - 1)].id)
+        } else {
+          setSelectedCartId(cart[Math.max(idx - 1, 0)].id)
+        }
+        return
+      }
+    }
+
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [cart, isPaymentOpen, isVariantOpen, selectedCartId])
+
   // Fetch menu items from API
   React.useEffect(() => {
     const fetchMenu = async () => {
@@ -179,6 +272,8 @@ export default function POSPage() {
           price: parseFloat(item.price) || 0,
           stock: parseInt(item.stock) || 0,
           img: item.image || `https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=250&fit=crop`,
+          has_variants: item.has_variants || false,
+          variants: item.variants || [],
         }))
         setMenuItems(menuData)
 
@@ -220,7 +315,35 @@ export default function POSPage() {
     return matchesCategory && matchesSearch
   })
 
+  const addToCartWithVariant = (product: MenuItem, variant: ProductVariant) => {
+    if (product.stock <= 0) {
+      toast({ title: t('menu.outOfStock'), description: `${product.name} out of stock`, variant: "destructive" })
+      return
+    }
+    const cartId = `${product.id}_${variant.id}`
+    const displayName = `${product.name} — ${variant.name}`
+    setMenuItems(prev => prev.map(m => m.id === product.id ? { ...m, stock: m.stock - 1 } : m))
+    setCartItems(prev => ({ ...prev, [cartId]: (prev[cartId] || 0) + 1 }))
+    setCart(prev => {
+      const existing = prev.find(item => item.id === cartId)
+      if (existing) return prev.map(item => item.id === cartId ? { ...item, quantity: item.quantity + 1 } : item)
+      return [...prev, { id: cartId, name: displayName, price: parseFloat(String(variant.price)) || 0, quantity: 1, category: product.category, variantId: variant.id, variantName: variant.name }]
+    })
+    setLastAddedItem(displayName)
+    setShowAddedPopup(true)
+    setTimeout(() => setShowAddedPopup(false), 1000)
+    setIsVariantOpen(false)
+    setVariantProduct(null)
+  }
+
   const addToCart = (product: typeof menuItems[0]) => {
+    // If product has variants, show variant picker
+    if (product.has_variants && product.variants.length > 0) {
+      setVariantProduct(product)
+      setIsVariantOpen(true)
+      return
+    }
+
     if (product.stock <= 0) {
       toast({
         title: t('menu.outOfStock'),
@@ -253,11 +376,14 @@ export default function POSPage() {
     setTimeout(() => setShowAddedPopup(false), 1000)
   }
 
+  // Extract product ID from cartId (handles both "5" and "5_3" variant format)
+  const getProductId = (cartId: string) => parseInt(cartId.split('_')[0])
+
   const updateQuantity = (id: string, delta: number) => {
     const cartItem = cart.find(i => i.id === id)
     if (!cartItem) return
 
-    const menuItem = menuItems.find(m => m.id === parseInt(id))
+    const menuItem = menuItems.find(m => m.id === getProductId(id))
     if (!menuItem) return
 
     // Agar delta positive hai aur stock nahi hai toh return
@@ -290,7 +416,7 @@ export default function POSPage() {
 
     // Stock update karo
     setMenuItems(prev => prev.map(m => {
-      if (m.id === parseInt(id)) {
+      if (m.id === getProductId(id)) {
         return delta > 0
           ? { ...m, stock: m.stock - 1 }  // Add more = stock -1
           : { ...m, stock: m.stock + 1 }  // Remove = stock +1
@@ -304,7 +430,7 @@ export default function POSPage() {
     if (cartItem) {
       // Stock wapas add karo
       setMenuItems(prev => prev.map(m =>
-        m.id === parseInt(id) ? { ...m, stock: m.stock + cartItem.quantity } : m
+        m.id === getProductId(id) ? { ...m, stock: m.stock + cartItem.quantity } : m
       ))
     }
 
@@ -344,7 +470,7 @@ export default function POSPage() {
     })
   }
 
-  const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0)
+  const subtotal = cart.reduce((sum, item) => sum + (Number(item.price) * item.quantity), 0)
   const tax = parseFloat((subtotal * (taxRate / 100)).toFixed(2))
   const donation = 1
   const total = subtotal + tax + donation
@@ -361,7 +487,7 @@ export default function POSPage() {
     setIsPaymentOpen(true)
   }
 
-  const handlePaymentComplete = async (customerData?: { name: string; phone: string }) => {
+  const handlePaymentComplete = async (customerData?: { name: string; phone: string; coupon?: AppliedCoupon; loyaltyPointsRedeemed?: number; splitPayments?: { method: string; amount: number }[]; paymentMethod?: string }) => {
     if (cart.length === 0) {
       toast({
         title: t('msg.cartEmpty'),
@@ -372,38 +498,52 @@ export default function POSPage() {
     }
 
     try {
-      // Create sale items for backend
+      // Create sale items for backend (extract product ID from variant cartId)
       const saleItems = cart.map(item => ({
-        product_id: parseInt(item.id),
+        product_id: getProductId(item.id),
         quantity: item.quantity,
         price: item.price,
       }))
 
+      const couponDiscount = customerData?.coupon?.discount ?? 0
+      const loyaltyDiscount = customerData?.loyaltyPointsRedeemed ?? 0
+      const finalTotal = total - couponDiscount - loyaltyDiscount
+
+      const isSplit = !!(customerData?.splitPayments && customerData.splitPayments.length >= 2)
       const response = await api.post('/sales', {
         items: saleItems,
-        payment_method: selectedPaymentMethod,
-        amount_paid: total,
+        payment_method: isSplit ? 'split' : selectedPaymentMethod,
+        ...(isSplit && { payments: customerData!.splitPayments }),
+        amount_paid: finalTotal,
         discount: 0,
         tax: tax,
         customer_name: customerData?.name,
         customer_phone: customerData?.phone,
+        coupon_code: customerData?.coupon?.code ?? null,
+        coupon_discount: couponDiscount,
+        loyalty_points_redeem: loyaltyDiscount,
       })
 
       if (response.data.success) {
-        const formattedOrderNumber = `INV-${String(response.data.sale_id).padStart(6, '0')}`
+        const formattedOrderNumber = `${invoicePrefix}-${String(response.data.sale_id).padStart(6, '0')}`
 
-        // Pehle cart data save karo (clear hone se pehle!)
+        const couponDiscount = customerData?.coupon?.discount ?? 0
+        const loyaltyDiscount = customerData?.loyaltyPointsRedeemed ?? 0
         const orderData: OrderData = {
           cart: [...cart],
           subtotal,
           tax,
           donation,
-          total,
+          total: total - couponDiscount - loyaltyDiscount,
           paymentMethod: selectedPaymentMethod,
           orderNumber: formattedOrderNumber,
           customerName: customerData?.name,
           customerPhone: customerData?.phone,
           orderTime: new Date(),
+          couponDiscount,
+          couponCode: customerData?.coupon?.code,
+          loyaltyDiscount,
+          splitPayments: customerData?.splitPayments,
         }
         setSavedOrder(orderData)
 
@@ -418,6 +558,16 @@ export default function POSPage() {
           title: t('msg.paymentSuccess'),
           description: t('msg.orderPlaced'),
         })
+
+        const pointsEarned = response.data.points_earned ?? 0
+        if (pointsEarned > 0 && customerData?.name) {
+          setTimeout(() => {
+            toast({
+              title: `⭐ ${pointsEarned} Points Earned!`,
+              description: `${customerData.name} ko ${pointsEarned} loyalty points mile — Total sale se`,
+            })
+          }, 600)
+        }
 
         // Thoda delay do taaki payment dialog properly close ho jaye
         // Uske baad print dialog open karo with saved order
@@ -468,23 +618,35 @@ export default function POSPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder={t('header.search')}
+                ref={searchRef}
+                placeholder={`${t('header.search')} (F2)`}
                 className="pl-10 h-10 text-sm border-white bg-muted/50 focus:bg-card focus:border-white focus:ring-2 focus:ring-white/20 rounded-full text-foreground"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
-            <div className="relative w-48">
-              <ScanLine className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                ref={barcodeRef}
-                placeholder="Scan barcode..."
-                className="pl-10 h-10 text-sm border-white bg-muted/50 focus:bg-card focus:border-primary focus:ring-2 focus:ring-primary/20 rounded-full text-foreground"
-                value={barcodeInput}
-                onChange={(e) => setBarcodeInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleBarcodeSearch(barcodeInput) }}
-                disabled={barcodeLoading}
-              />
+            <div className="flex gap-2">
+              <div className="relative w-44">
+                <ScanLine className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  ref={barcodeRef}
+                  placeholder="Scan barcode..."
+                  className="pl-10 h-10 text-sm border-white bg-muted/50 focus:bg-card focus:border-primary focus:ring-2 focus:ring-primary/20 rounded-full text-foreground"
+                  value={barcodeInput}
+                  onChange={(e) => setBarcodeInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleBarcodeSearch(barcodeInput) }}
+                  disabled={barcodeLoading}
+                />
+              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-10 w-10 rounded-full border-white bg-muted/50 hover:bg-primary/10 hover:border-primary flex-shrink-0"
+                onClick={() => setIsCameraOpen(true)}
+                title="Camera se scan karo"
+              >
+                <Camera className="h-4 w-4" />
+              </Button>
             </div>
           </div>
 
@@ -541,6 +703,15 @@ export default function POSPage() {
         </div>
       </header>
 
+      <CameraScanner
+        open={isCameraOpen}
+        onClose={() => setIsCameraOpen(false)}
+        onDetected={(code) => {
+          setIsCameraOpen(false)
+          handleBarcodeSearch(code)
+        }}
+      />
+
       <PaymentDialog
         open={isPaymentOpen}
         onOpenChange={setIsPaymentOpen}
@@ -552,6 +723,31 @@ export default function POSPage() {
         onComplete={handlePaymentComplete}
         onPaymentMethodChange={setSelectedPaymentMethod}
       />
+
+      {/* Variant Selection Dialog */}
+      {isVariantOpen && variantProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setIsVariantOpen(false)}>
+          <div className="bg-background border border-white rounded-2xl shadow-2xl w-80 max-w-[92vw] p-5" onClick={e => e.stopPropagation()}>
+            <h3 className="font-bold text-lg mb-1">{variantProduct.name}</h3>
+            <p className="text-sm text-muted-foreground mb-4">Select a variant to add to cart</p>
+            <div className="space-y-2">
+              {variantProduct.variants.map(variant => (
+                <button
+                  key={variant.id}
+                  className="w-full flex items-center justify-between px-4 py-3 rounded-xl border border-white hover:bg-primary/10 hover:border-primary transition-all text-left"
+                  onClick={() => addToCartWithVariant(variantProduct, variant)}
+                >
+                  <span className="font-medium">{variant.name}</span>
+                  <span className="font-bold text-primary">Rs. {Number(variant.price).toLocaleString()}</span>
+                </button>
+              ))}
+            </div>
+            <button className="mt-4 w-full text-sm text-muted-foreground hover:text-foreground transition-colors" onClick={() => setIsVariantOpen(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       <ReceiptPrintDialog
         open={isPrintDialogOpen}
@@ -565,13 +761,15 @@ export default function POSPage() {
         cart={savedOrder?.cart || cart}
         subtotal={savedOrder?.subtotal || subtotal}
         tax={savedOrder?.tax || tax}
-        discount={savedOrder ? 0 : discount}
+        discount={savedOrder?.couponDiscount ?? 0}
+        loyaltyDiscount={savedOrder?.loyaltyDiscount ?? 0}
         total={savedOrder?.total || total}
         paymentMethod={savedOrder?.paymentMethod || selectedPaymentMethod}
         orderNumber={savedOrder?.orderNumber || orderNumber}
         customerName={savedOrder?.customerName}
         customerPhone={savedOrder?.customerPhone}
         orderTime={savedOrder?.orderTime}
+        splitPayments={savedOrder?.splitPayments}
       />
 
       {/* Main Content - Optimized for 320px+ */}
@@ -801,7 +999,15 @@ export default function POSPage() {
               ) : (
                 <div className="space-y-1.5 xs:space-y-2">
                   {cart.map((item) => (
-                    <div key={item.id} className="flex justify-between items-center bg-muted/50 p-2 xs:p-2.5 sm:p-3 rounded-lg xs:rounded-xl">
+                    <div
+                      key={item.id}
+                      onClick={() => setSelectedCartId(item.id === selectedCartId ? null : item.id)}
+                      className={`flex justify-between items-center p-2 xs:p-2.5 sm:p-3 rounded-lg xs:rounded-xl cursor-pointer transition-all ${
+                        selectedCartId === item.id
+                          ? 'bg-primary/15 border border-primary/40 ring-1 ring-primary/20'
+                          : 'bg-muted/50 border border-transparent hover:bg-muted/70'
+                      }`}
+                    >
                       <div className="flex-1 min-w-0 mr-1.5 xs:mr-2">
                         <p className="font-medium text-xs xs:text-xs md:text-sm text-foreground truncate">{item.name}</p>
                         <div className="flex items-center gap-2 mt-1">
@@ -820,11 +1026,11 @@ export default function POSPage() {
                               <Plus className="w-2.5 h-2.5 text-primary" />
                             </button>
                           </div>
-                          <p className="text-[10px] md:text-xs text-muted-foreground">x Rs. {item.price.toFixed(2)}</p>
+                          <p className="text-[10px] md:text-xs text-muted-foreground">x Rs. {Number(item.price).toFixed(2)}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 xs:gap-2 flex-shrink-0">
-                        <span className="font-bold text-primary text-xs xs:text-xs md:text-sm">Rs. {(item.price * item.quantity).toFixed(2)}</span>
+                        <span className="font-bold text-primary text-xs xs:text-xs md:text-sm">Rs. {(Number(item.price) * item.quantity).toFixed(2)}</span>
                         <button
                           onClick={() => removeFromCart(item.id)}
                           className="w-8 h-8 xs:w-8 xs:h-8 rounded-full hover:bg-destructive/20 flex items-center justify-center transition-colors active:scale-90 touch-target-sm"

@@ -34,6 +34,10 @@ router.post('/bulk-import', checkRole(['admin']), upload.single('file'), async (
       mapHeaders: ({ header }) => header.trim().replace(/^[\u200B\u200C\u200D\u200E\u200F\uFEFF]/, '')
     }))
     .on('data', (data) => results.push(data))
+    .on('error', (err) => {
+      console.error('CSV parse error:', err);
+      res.status(400).json({ success: false, message: 'Failed to parse CSV file: ' + err.message });
+    })
     .on('end', async () => {
       const connection = await db.getConnection();
       try {
@@ -457,6 +461,62 @@ router.delete('/:id', checkRole(['admin']), async (req, res) => {
       success: false,
       message: "Error deleting product"
     });
+  }
+});
+
+// ===============================
+// GET VARIANTS FOR A PRODUCT
+// ===============================
+router.get('/:id/variants', checkRole(['admin', 'cashier']), async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      'SELECT * FROM product_variants WHERE product_id = ? AND is_active = 1 ORDER BY sort_order ASC, id ASC',
+      [req.params.id]
+    );
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error('❌ Variants fetch error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch variants' });
+  }
+});
+
+// ===============================
+// SAVE ALL VARIANTS FOR A PRODUCT (replace all)
+// ===============================
+router.post('/:id/variants', checkRole(['admin']), async (req, res) => {
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    const { variants } = req.body; // [{ name, price, sort_order }]
+    const productId = req.params.id;
+
+    // Delete existing variants
+    await conn.query('DELETE FROM product_variants WHERE product_id = ?', [productId]);
+
+    // Insert new ones
+    if (variants && variants.length > 0) {
+      for (let i = 0; i < variants.length; i++) {
+        const v = variants[i];
+        if (!v.name || v.name.trim() === '') continue;
+        await conn.query(
+          'INSERT INTO product_variants (product_id, name, price, sort_order) VALUES (?, ?, ?, ?)',
+          [productId, v.name.trim(), parseFloat(v.price) || 0, i]
+        );
+      }
+    }
+
+    await conn.commit();
+    const [rows] = await conn.query(
+      'SELECT * FROM product_variants WHERE product_id = ? ORDER BY sort_order ASC',
+      [productId]
+    );
+    res.json({ success: true, message: 'Variants saved', data: rows });
+  } catch (err) {
+    await conn.rollback();
+    console.error('❌ Variants save error:', err);
+    res.status(500).json({ success: false, message: 'Failed to save variants' });
+  } finally {
+    conn.release();
   }
 });
 

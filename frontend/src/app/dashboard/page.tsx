@@ -46,6 +46,22 @@ interface DashboardStats {
   monthRevenue: number
 }
 
+function parseSplitBreakdown(str?: string | null): { method: string; amount: number }[] | null {
+  if (!str) return null
+  return str.split('|').map(part => {
+    const idx = part.indexOf(':')
+    return { method: part.slice(0, idx), amount: parseFloat(part.slice(idx + 1)) }
+  })
+}
+
+function getPaymentBadgeLabel(sale: any): string {
+  if (sale.payment_method === 'split' && sale.split_breakdown) {
+    const parts = parseSplitBreakdown(sale.split_breakdown)
+    if (parts) return parts.map(p => p.method.charAt(0).toUpperCase() + p.method.slice(1)).join(' + ')
+  }
+  return sale.payment_method || 'cash'
+}
+
 export default function DashboardPage() {
   const { t, isRTL } = useLanguage()
   const { toast } = useToast()
@@ -93,7 +109,7 @@ export default function DashboardPage() {
     setReturnMode(true)
   }
 
-  const printReturnSlip = (returnId: number, refundAmount: number, returnedItems: { product_name: string, quantity: number, price: number }[], reason: string) => {
+  const printReturnSlip = (returnId: number, refundAmount: number, returnedItems: { product_name: string, quantity: number, price: number }[], reason: string, pointsReversed = 0, pointsRestored = 0) => {
     const itemsSubtotal = returnedItems.reduce((s, i) => s + i.quantity * i.price, 0)
     const taxPortion = parseFloat((refundAmount - itemsSubtotal).toFixed(2))
     const win = window.open('', '_blank', 'width=400,height=600')
@@ -114,10 +130,10 @@ export default function DashboardPage() {
         @media print { body { padding: 0; } }
       </style></head><body>
       <h2>Elites POS</h2>
-      <p class="center" style="font-weight:bold;">Return Receipt</p>
+      <p class="center" style="font-weight:bold;">*** RETURN RECEIPT ***</p>
       <div class="divider"></div>
       <p><b>Return #:</b> ${returnId}</p>
-      <p><b>Sale #:</b> ${selectedSale?.id}</p>
+      <p><b>Sale #:</b> INV-${String(selectedSale?.id || 0).padStart(6, '0')}</p>
       <p><b>Customer:</b> ${selectedSale?.customer_name || 'Walk-in'}</p>
       <p><b>Date:</b> ${new Date().toLocaleString()}</p>
       ${reason ? `<p><b>Reason:</b> ${reason}</p>` : ''}
@@ -135,9 +151,11 @@ export default function DashboardPage() {
       </table>
       <div class="divider"></div>
       <table style="width:100%">
-        <tr><td>Subtotal:</td><td class="right">Rs. ${itemsSubtotal.toFixed(2)}</td></tr>
+        <tr><td>Items Subtotal:</td><td class="right">Rs. ${itemsSubtotal.toFixed(2)}</td></tr>
         ${taxPortion > 0 ? `<tr><td>Tax (refunded):</td><td class="right">Rs. ${taxPortion.toFixed(2)}</td></tr>` : ''}
         <tr style="color:#888"><td>Donation:</td><td class="right">Rs. 1.00 (non-refundable)</td></tr>
+        ${pointsRestored > 0 ? `<tr style="color:#16a34a"><td>&#9733; Loyalty Pts Restored:</td><td class="right">+${pointsRestored} pts</td></tr>` : ''}
+        ${pointsReversed > 0 ? `<tr style="color:#b45309"><td>&#9733; Loyalty Pts Reversed:</td><td class="right">-${pointsReversed} pts</td></tr>` : ''}
       </table>
       <div class="divider"></div>
       <p class="total right">Total Refund: Rs. ${parseFloat(refundAmount.toString()).toFixed(2)}</p>
@@ -163,18 +181,30 @@ export default function DashboardPage() {
     try {
       const res = await api.post(`/sales/${selectedSale.id}/return`, { items, reason: returnReason })
       if (res.data.success) {
-        toast({ title: "Return Processed", description: `Refund: Rs. ${parseFloat(res.data.refund_amount).toFixed(2)} — Stock restored` })
+        const pointsReversed = res.data.points_reversed || 0
+        const pointsRestored = res.data.points_restored || 0
+        const refundAmt = parseFloat(res.data.refund_amount)
+
+        const parts = [`Refund: Rs. ${refundAmt.toFixed(2)}`]
+        if (pointsRestored > 0) parts.push(`+${pointsRestored} pts restored`)
+        if (pointsReversed > 0) parts.push(`-${pointsReversed} pts reversed`)
+        toast({ title: "Return Processed", description: parts.join(' • ') })
 
         const returnedItems = items.map(({ sale_item_id, quantity }) => {
           const item = saleDetail?.items?.find((i: any) => i.id === sale_item_id)
           return { product_name: item?.product_name || '—', quantity, price: parseFloat(item?.price || 0) }
         })
-        printReturnSlip(res.data.return_id, parseFloat(res.data.refund_amount), returnedItems, returnReason)
+        printReturnSlip(res.data.return_id, refundAmt, returnedItems, returnReason, pointsReversed, pointsRestored)
 
         setReturnMode(false)
         setReturnQtys({})
         setReturnReason('')
-        const returnsRes = await api.get(`/sales/${selectedSale.id}/returns`)
+
+        // Refresh return history in dialog + sales feed
+        const [returnsRes] = await Promise.all([
+          api.get(`/sales/${selectedSale.id}/returns`),
+          fetchData(true),
+        ])
         if (returnsRes.data.success) setExistingReturns(returnsRes.data.data)
       }
     } catch (err: any) {
@@ -208,7 +238,11 @@ export default function DashboardPage() {
       <div class="divider"></div>
       <p><b>Sale #:</b> ${sale?.id}</p>
       <p><b>Customer:</b> ${sale?.customer_name || 'Walk-in'}</p>
-      <p><b>Payment:</b> ${saleDetail?.sale?.payment_method || sale?.payment_method || '—'}</p>
+      <p><b>Payment:</b> ${
+        saleDetail?.payments?.length > 0
+          ? saleDetail.payments.map((p: any) => `${p.method.charAt(0).toUpperCase() + p.method.slice(1)}: Rs.${parseFloat(p.amount).toFixed(2)}`).join(' | ')
+          : (saleDetail?.sale?.payment_method || sale?.payment_method || '—')
+      }</p>
       <p><b>Date:</b> ${sale?.sale_date ? new Date(sale.sale_date).toLocaleString() : '—'}</p>
       <div class="divider"></div>
       <table>
@@ -229,7 +263,8 @@ export default function DashboardPage() {
       <table style="width:100%">
         <tr><td>Subtotal:</td><td class="right">Rs. ${parseFloat(saleDetail?.sale?.total || 0).toFixed(2)}</td></tr>
         <tr><td>Tax:</td><td class="right">Rs. ${parseFloat(saleDetail?.sale?.tax || 0).toFixed(2)}</td></tr>
-        ${parseFloat(saleDetail?.sale?.discount || 0) > 0 ? `<tr style="color:green"><td>Discount:</td><td class="right">-Rs. ${parseFloat(saleDetail?.sale?.discount || 0).toFixed(2)}</td></tr>` : ''}
+        ${parseFloat(saleDetail?.sale?.coupon_discount || 0) > 0 ? `<tr style="color:green"><td>Promo Code:</td><td class="right">-Rs. ${parseFloat(saleDetail?.sale?.coupon_discount || 0).toFixed(2)}</td></tr>` : ''}
+        ${parseFloat(saleDetail?.sale?.loyalty_points_redeemed || 0) > 0 ? `<tr style="color:#b45309"><td>&#9733; Loyalty Points:</td><td class="right">-Rs. ${parseFloat(saleDetail?.sale?.loyalty_points_redeemed || 0).toFixed(2)}</td></tr>` : ''}
         <tr style="color:purple"><td>Donation:</td><td class="right">Rs. 1.00</td></tr>
       </table>
       <div class="divider"></div>
@@ -246,27 +281,29 @@ export default function DashboardPage() {
     setUserRole(localStorage.getItem('userRole') || 'cashier')
   }, [])
 
-  React.useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true)
-        const res = await api.get('/dashboard/all')
-        const { stats: statsData, recentSales: recentData, topCategories: categoriesData, dailySales: dailyData } = res.data.data
-
-        setStats(statsData)
-        setRecentSales(recentData || [])
-        setTopCategories(categoriesData || [])
-        setDailySales(dailyData || [])
-      } catch (err: any) {
-        console.error('Failed to fetch dashboard data:', err)
-        console.error('Error Response:', err.response?.data)
-        console.error('Error Status:', err.response?.status)
-      } finally {
-        setLoading(false)
-      }
+  const fetchData = React.useCallback(async (silent = false) => {
+    try {
+      if (!silent) setLoading(true)
+      const res = await api.get('/dashboard/all')
+      const { stats: statsData, recentSales: recentData, topCategories: categoriesData, dailySales: dailyData } = res.data.data
+      setStats(statsData)
+      setRecentSales(recentData || [])
+      setTopCategories(categoriesData || [])
+      setDailySales(dailyData || [])
+    } catch (err: any) {
+      console.error('Failed to fetch dashboard data:', err)
+    } finally {
+      if (!silent) setLoading(false)
     }
-    fetchData()
   }, [])
+
+  React.useEffect(() => { fetchData() }, [fetchData])
+
+  // Auto-refresh sales feed every 30 seconds (silent — no loading spinner)
+  React.useEffect(() => {
+    const interval = setInterval(() => fetchData(true), 30000)
+    return () => clearInterval(interval)
+  }, [fetchData])
 
   // Don't render until client-side hydration is complete
   if (userRole === null || loading) {
@@ -419,7 +456,7 @@ export default function DashboardPage() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-xs sm:text-sm font-semibold leading-none truncate text-foreground">
-                          Sale #{sale.id}
+                          Invoice #{sale.id}{sale.table_name ? ` • Table ${sale.table_name}` : ''}
                         </p>
                         <p className="text-[10px] sm:text-xs text-muted-foreground truncate mt-0.5">
                           {sale.customer_name || 'Walk-in'} &nbsp;•&nbsp; {new Date(sale.sale_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -429,7 +466,7 @@ export default function DashboardPage() {
                         <span className="text-xs sm:text-sm font-bold text-accent">
                           +Rs. {parseFloat(sale.grand_total || 0).toFixed(0)}
                         </span>
-                        <span className="text-[9px] text-muted-foreground capitalize">{sale.payment_method || 'cash'}</span>
+                        <span className="text-[9px] text-muted-foreground capitalize">{getPaymentBadgeLabel(sale)}</span>
                       </div>
                     </button>
                   ))}
@@ -469,7 +506,7 @@ export default function DashboardPage() {
                       const isBest = day.revenue === maxRevenue
 
                       return (
-                        <div key={day.day} className="flex-1 flex flex-col items-center gap-1 group relative">
+                        <div key={index} className="flex-1 flex flex-col items-center gap-1 group relative">
                           {/* Bar Container */}
                           <div className="relative w-full flex justify-center">
                             <div
@@ -588,7 +625,18 @@ export default function DashboardPage() {
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     <CreditCard className="w-3 h-3" /> Payment
                   </div>
-                  <p className="text-sm font-medium capitalize">{saleDetail?.sale?.payment_method || selectedSale?.payment_method || '—'}</p>
+                  {saleDetail?.payments?.length > 0 ? (
+                    <div className="space-y-0.5 pt-0.5">
+                      {saleDetail.payments.map((p: any, i: number) => (
+                        <div key={i} className="flex justify-between items-center">
+                          <span className="text-sm capitalize">{p.method}</span>
+                          <span className="text-sm font-semibold text-accent">Rs. {parseFloat(p.amount).toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm font-medium capitalize">{saleDetail?.sale?.payment_method || selectedSale?.payment_method || '—'}</p>
+                  )}
                 </div>
                 <div className="bg-muted/30 rounded-lg p-3 space-y-1">
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -603,6 +651,22 @@ export default function DashboardPage() {
                   <p className="text-sm font-bold text-accent">Rs. {parseFloat(selectedSale?.grand_total || 0).toFixed(2)}</p>
                 </div>
               </div>
+
+              {/* Loyalty / Coupon summary */}
+              {(parseFloat(saleDetail?.sale?.coupon_discount || 0) > 0 || parseFloat(saleDetail?.sale?.loyalty_points_redeemed || 0) > 0) && (
+                <div className="flex flex-wrap gap-2">
+                  {parseFloat(saleDetail?.sale?.coupon_discount || 0) > 0 && (
+                    <div className="flex items-center gap-1.5 text-xs bg-green-500/10 border border-green-500/20 rounded-full px-3 py-1 text-green-600">
+                      <span>🏷️ Promo: -Rs. {parseFloat(saleDetail.sale.coupon_discount).toFixed(2)}</span>
+                    </div>
+                  )}
+                  {parseFloat(saleDetail?.sale?.loyalty_points_redeemed || 0) > 0 && (
+                    <div className="flex items-center gap-1.5 text-xs bg-yellow-500/10 border border-yellow-500/20 rounded-full px-3 py-1 text-yellow-600">
+                      <span>⭐ Points used: {saleDetail.sale.loyalty_points_redeemed} pts (-Rs. {parseFloat(saleDetail.sale.loyalty_points_redeemed).toFixed(2)})</span>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Items Table / Return Mode */}
               {returnMode ? (

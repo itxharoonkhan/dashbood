@@ -11,7 +11,9 @@ const checkRole = require('../middleware/roleMiddleware');
 // CREATE SALE (Admin + Cashier)
 // ===============================
 router.post('/', verifyToken, checkRole(['admin', 'cashier']), async (req, res) => {
-  const { customer_id: provided_id, items, discount = 0, payment_method, amount_paid, tax: frontendTax, customer_name, customer_phone } = req.body;
+  const { customer_id: provided_id, items, discount = 0, payment_method, payments, amount_paid, tax: frontendTax, customer_name, customer_phone, coupon_code, coupon_discount = 0, loyalty_points_redeem = 0 } = req.body;
+  const isSplit = Array.isArray(payments) && payments.length >= 2;
+  const resolvedPaymentMethod = isSplit ? 'split' : payment_method;
 
   if (!items || items.length === 0) {
     return res.status(400).json({
@@ -82,18 +84,49 @@ router.post('/', verifyToken, checkRole(['admin', 'cashier']), async (req, res) 
       subtotal += item.quantity * item.price;
     }
 
-    // Use frontend tax if provided, otherwise default to 0 or calculate
     let tax = frontendTax !== undefined ? frontendTax : 0;
-    
-    // trust the amount_paid 
+    const appliedCouponDiscount = parseFloat(coupon_discount) || 0;
+    const pointsToRedeem = parseInt(loyalty_points_redeem) || 0;
     const final_total = amount_paid;
+
+    // ✅ Validate loyalty points redemption
+    if (pointsToRedeem > 0) {
+      if (!customer_id && !customer_phone) {
+        throw new Error('Customer required for loyalty points redemption');
+      }
+    }
+
+    // Validate coupon within transaction if provided
+    let coupon_id = null;
+    if (coupon_code) {
+      const [couponRows] = await connection.query(
+        "SELECT * FROM coupons WHERE code = ? AND is_active = 1 AND is_deleted = 0",
+        [coupon_code.trim().toUpperCase()]
+      );
+      if (couponRows.length > 0) {
+        const c = couponRows[0];
+        const limitOk = c.usage_limit === null || c.used_count < c.usage_limit;
+        const notExpired = !c.expiry_date || new Date(c.expiry_date) >= new Date();
+        if (limitOk && notExpired) {
+          coupon_id = c.id;
+        }
+      }
+    }
+
+    // ✅ Validate split payment sum
+    if (isSplit) {
+      const splitSum = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+      if (Math.abs(splitSum - amount_paid) > 0.01) {
+        throw new Error(`Split payment sum (${splitSum}) does not match total (${amount_paid})`);
+      }
+    }
 
     // ✅ Insert Sale
     const [saleResult] = await connection.query(
       `INSERT INTO sales
-      (customer_id, cashier_id, shift_id, total, discount, tax, final_total, payment_method, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [customer_id || null, req.user.id, shift_id, subtotal, discount, tax, final_total, payment_method]
+      (customer_id, cashier_id, shift_id, total, discount, tax, final_total, payment_method, coupon_id, coupon_discount, loyalty_points_redeemed, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [customer_id || null, req.user.id, shift_id, subtotal, discount, tax, final_total, resolvedPaymentMethod, coupon_id, appliedCouponDiscount, pointsToRedeem]
     );
 
     const sale_id = saleResult.insertId;
@@ -133,14 +166,86 @@ router.post('/', verifyToken, checkRole(['admin', 'cashier']), async (req, res) 
       );
     }
 
+    // ✅ Insert split payment breakdown
+    if (isSplit) {
+      for (const p of payments) {
+        await connection.query(
+          "INSERT INTO sale_payments (sale_id, method, amount) VALUES (?, ?, ?)",
+          [sale_id, p.method, parseFloat(p.amount) || 0]
+        );
+      }
+    }
+
+    // ✅ Record coupon usage
+    if (coupon_id && appliedCouponDiscount > 0) {
+      await connection.query(
+        "INSERT INTO coupon_usages (coupon_id, sale_id, discount) VALUES (?, ?, ?)",
+        [coupon_id, sale_id, appliedCouponDiscount]
+      );
+      await connection.query(
+        "UPDATE coupons SET used_count = used_count + 1 WHERE id = ?",
+        [coupon_id]
+      );
+    }
+
+    // ✅ Loyalty: Redeem points (deduct before commit)
+    if (pointsToRedeem > 0 && customer_id) {
+      const [[cust]] = await connection.query(
+        'SELECT loyalty_points FROM customers WHERE id = ? FOR UPDATE',
+        [customer_id]
+      );
+      if (!cust || cust.loyalty_points < pointsToRedeem) {
+        throw new Error('Insufficient loyalty points');
+      }
+      const newBalance = cust.loyalty_points - pointsToRedeem;
+      await connection.query(
+        'UPDATE customers SET loyalty_points = ? WHERE id = ?',
+        [newBalance, customer_id]
+      );
+      await connection.query(
+        `INSERT INTO loyalty_transactions (customer_id, sale_id, type, points, balance_after, note)
+         VALUES (?, ?, 'redeem', ?, ?, ?)`,
+        [customer_id, sale_id, pointsToRedeem, newBalance, `Redeemed at sale #${sale_id}`]
+      );
+    }
+
     await connection.commit();
+
+    // ✅ Loyalty: Earn points (after commit — non-blocking)
+    let points_earned = 0;
+    if (customer_id) {
+      try {
+        const [[loyaltySettings]] = await db.query(
+          'SELECT loyalty_rate FROM settings LIMIT 1'
+        );
+        const rate = parseFloat(loyaltySettings?.loyalty_rate) || 100;
+        points_earned = Math.floor(final_total / rate);
+        if (points_earned > 0) {
+          const [[cust]] = await db.query(
+            'SELECT loyalty_points FROM customers WHERE id = ?', [customer_id]
+          );
+          const newBal = (cust?.loyalty_points || 0) + points_earned;
+          await db.query(
+            'UPDATE customers SET loyalty_points = ? WHERE id = ?', [newBal, customer_id]
+          );
+          await db.query(
+            `INSERT INTO loyalty_transactions (customer_id, sale_id, type, points, balance_after, note)
+             VALUES (?, ?, 'earn', ?, ?, ?)`,
+            [customer_id, sale_id, points_earned, newBal, `Earned from sale #${sale_id}`]
+          );
+        }
+      } catch (loyaltyErr) {
+        console.warn('⚠️ Loyalty earn failed (non-critical):', loyaltyErr.message);
+      }
+    }
 
     res.json({
       success: true,
       message: "Sale completed successfully",
       sale_id,
       final_total,
-      change: 0 // Frontend handles change calculation display
+      change: 0,
+      points_earned
     });
 
   } catch (err) {
@@ -221,7 +326,9 @@ router.get('/:id', verifyToken, checkRole(['admin']), async (req, res) => {
     const { id } = req.params;
 
     const [saleRows] = await db.query(
-      "SELECT * FROM sales WHERE id = ?",
+      `SELECT s.*, c.name AS customer_name, c.phone AS customer_phone
+       FROM sales s LEFT JOIN customers c ON s.customer_id = c.id
+       WHERE s.id = ?`,
       [id]
     );
 
@@ -233,12 +340,17 @@ router.get('/:id', verifyToken, checkRole(['admin']), async (req, res) => {
     }
 
     const [itemsRows] = await db.query(
-      `SELECT 
-        si.*, 
-        p.name AS product_name 
+      `SELECT
+        si.*,
+        p.name AS product_name
        FROM sale_items si
        JOIN products p ON si.product_id = p.id
        WHERE si.sale_id = ?`,
+      [id]
+    );
+
+    const [paymentsRows] = await db.query(
+      "SELECT method, amount FROM sale_payments WHERE sale_id = ? ORDER BY id",
       [id]
     );
 
@@ -246,7 +358,8 @@ router.get('/:id', verifyToken, checkRole(['admin']), async (req, res) => {
       success: true,
       data: {
         sale: saleRows[0],
-        items: itemsRows
+        items: itemsRows,
+        payments: paymentsRows
       }
     });
 
@@ -314,12 +427,12 @@ router.post('/:id/return', verifyToken, checkRole(['admin']), async (req, res) =
 
     const [originalItems] = await connection.query("SELECT * FROM sale_items WHERE sale_id = ?", [id]);
 
-    // Proportional tax rate from original sale
-    const saleSubtotal = parseFloat(saleRows[0].total) || 0;
-    const saleTax = parseFloat(saleRows[0].tax) || 0;
-    const taxRate = saleSubtotal > 0 ? saleTax / saleSubtotal : 0;
+    const sale = saleRows[0];
+    const saleSubtotal = parseFloat(sale.total) || 0;   // sum of item prices (before discounts)
+    const finalTotal  = parseFloat(sale.final_total) || 0; // actual cash paid by customer
 
-    let refundAmount = 0;
+    // How much of the original subtotal is being returned
+    let returnedSubtotal = 0;
 
     for (const item of items) {
       const original = originalItems.find(oi => oi.id === item.sale_item_id);
@@ -339,10 +452,15 @@ router.post('/:id/return', verifyToken, checkRole(['admin']), async (req, res) =
         throw new Error(`Cannot return ${item.quantity} units — only ${available} available to return`);
       }
 
-      const itemSubtotal = item.quantity * parseFloat(original.price);
-      refundAmount += itemSubtotal + (itemSubtotal * taxRate);
+      returnedSubtotal += item.quantity * parseFloat(original.price);
     }
-    refundAmount = parseFloat(refundAmount.toFixed(2));
+
+    // Ratio = what fraction of original purchase is being returned
+    const ratio = saleSubtotal > 0 ? Math.min(returnedSubtotal / saleSubtotal, 1) : 0;
+
+    // Refund = proportional to what customer ACTUALLY PAID (final_total)
+    // This correctly handles loyalty/coupon discounts — customer never gets more than they paid
+    const refundAmount = parseFloat((finalTotal * ratio).toFixed(2));
 
     const [returnResult] = await connection.query(
       "INSERT INTO sale_returns (sale_id, reason, refund_amount, return_date) VALUES (?, ?, ?, NOW())",
@@ -364,7 +482,51 @@ router.post('/:id/return', verifyToken, checkRole(['admin']), async (req, res) =
     }
 
     await connection.commit();
-    res.json({ success: true, message: "Return processed successfully", refund_amount: refundAmount, return_id });
+
+    // ✅ Loyalty: Reverse earned points + Restore redeemed points (non-blocking)
+    let points_reversed = 0;  // earned points taken back
+    let points_restored = 0;  // redeemed points given back
+    if (sale.customer_id) {
+      try {
+        const [[loyaltySettings]] = await db.query('SELECT loyalty_rate FROM settings LIMIT 1');
+        const rate = parseFloat(loyaltySettings?.loyalty_rate) || 100;
+
+        const [[cust]] = await db.query('SELECT loyalty_points FROM customers WHERE id = ?', [sale.customer_id]);
+        let balance = cust?.loyalty_points || 0;
+
+        // 1. Reverse earned points from this sale (proportional to items returned)
+        const pointsEarned = Math.floor(finalTotal / rate);
+        const pointsToReverse = Math.floor(pointsEarned * ratio);
+        if (pointsToReverse > 0) {
+          points_reversed = pointsToReverse;
+          balance = Math.max(0, balance - pointsToReverse);
+          await db.query('UPDATE customers SET loyalty_points = ? WHERE id = ?', [balance, sale.customer_id]);
+          await db.query(
+            `INSERT INTO loyalty_transactions (customer_id, sale_id, type, points, balance_after, note)
+             VALUES (?, ?, 'refund', ?, ?, ?)`,
+            [sale.customer_id, sale.id, pointsToReverse, balance, `Earned pts reversed — return on sale #${sale.id}`]
+          );
+        }
+
+        // 2. Restore redeemed points (customer used these to pay — give them back)
+        const redeemedPts = parseInt(sale.loyalty_points_redeemed) || 0;
+        const pointsToRestore = Math.floor(redeemedPts * ratio);
+        if (pointsToRestore > 0) {
+          points_restored = pointsToRestore;
+          balance = balance + pointsToRestore;
+          await db.query('UPDATE customers SET loyalty_points = ? WHERE id = ?', [balance, sale.customer_id]);
+          await db.query(
+            `INSERT INTO loyalty_transactions (customer_id, sale_id, type, points, balance_after, note)
+             VALUES (?, ?, 'earn', ?, ?, ?)`,
+            [sale.customer_id, sale.id, pointsToRestore, balance, `Redeemed pts restored — return on sale #${sale.id}`]
+          );
+        }
+      } catch (loyaltyErr) {
+        console.warn('⚠️ Loyalty return adjustment failed (non-critical):', loyaltyErr.message);
+      }
+    }
+
+    res.json({ success: true, message: "Return processed successfully", refund_amount: refundAmount, return_id, points_reversed, points_restored });
 
   } catch (err) {
     await connection.rollback();
@@ -423,6 +585,44 @@ router.put('/:id/cancel', verifyToken, checkRole(['admin']), async (req, res) =>
     );
 
     await connection.commit();
+
+    // ✅ Loyalty: Reverse earned points + restore redeemed points (non-blocking)
+    const sale = saleRows[0];
+    if (sale.customer_id) {
+      try {
+        const [[loyaltySettings]] = await db.query('SELECT loyalty_rate FROM settings LIMIT 1');
+        const rate = parseFloat(loyaltySettings?.loyalty_rate) || 100;
+
+        const [[cust]] = await db.query('SELECT loyalty_points FROM customers WHERE id = ?', [sale.customer_id]);
+        let balance = cust?.loyalty_points || 0;
+
+        // Reverse earned points from this sale
+        const pointsEarned = Math.floor(parseFloat(sale.final_total) / rate);
+        if (pointsEarned > 0) {
+          balance = Math.max(0, balance - pointsEarned);
+          await db.query('UPDATE customers SET loyalty_points = ? WHERE id = ?', [balance, sale.customer_id]);
+          await db.query(
+            `INSERT INTO loyalty_transactions (customer_id, sale_id, type, points, balance_after, note)
+             VALUES (?, ?, 'refund', ?, ?, ?)`,
+            [sale.customer_id, sale.id, pointsEarned, balance, `Earn reversed — sale #${sale.id} cancelled`]
+          );
+        }
+
+        // Restore redeemed points from this sale
+        const pointsRedeemed = parseInt(sale.loyalty_points_redeemed) || 0;
+        if (pointsRedeemed > 0) {
+          balance = balance + pointsRedeemed;
+          await db.query('UPDATE customers SET loyalty_points = ? WHERE id = ?', [balance, sale.customer_id]);
+          await db.query(
+            `INSERT INTO loyalty_transactions (customer_id, sale_id, type, points, balance_after, note)
+             VALUES (?, ?, 'refund', ?, ?, ?)`,
+            [sale.customer_id, sale.id, pointsRedeemed, balance, `Redeemed points restored — sale #${sale.id} cancelled`]
+          );
+        }
+      } catch (loyaltyErr) {
+        console.warn('⚠️ Loyalty cancel reversal failed (non-critical):', loyaltyErr.message);
+      }
+    }
 
     res.json({
       success: true,
