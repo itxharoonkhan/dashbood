@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Separator } from "@/components/ui/separator"
 import { Label } from "@/components/ui/label"
+import { PhoneInput, isValidPhone, formatPhone } from "@/components/ui/phone-input"
 import {
   Dialog,
   DialogContent,
@@ -83,7 +84,7 @@ export default function CustomersPage() {
 
   React.useEffect(() => { fetchCustomers() }, [])
 
-  const resetForm = () => setFormData({ name: "", email: "", phone: "", address: "", city: "", pincode: "", gst_number: "" })
+  const resetForm = () => setFormData({ name: "", email: "", phone: "92", address: "", city: "", pincode: "", gst_number: "" })
 
   const handleAdd = async () => {
     if (!formData.name.trim()) {
@@ -266,7 +267,7 @@ export default function CustomersPage() {
               </CardHeader>
               <CardContent className="space-y-3">
                 {customer.email && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Mail className="w-4 h-4" /><span>{customer.email}</span></div>}
-                {customer.phone && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Phone className="w-4 h-4" /><span>{customer.phone}</span></div>}
+                {customer.phone && customer.phone !== "92" && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Phone className="w-4 h-4" /><span>{formatPhone(customer.phone)}</span></div>}
                 {(customer.address || customer.city) && <div className="flex items-center gap-2 text-sm text-muted-foreground"><MapPin className="w-4 h-4" /><span>{[customer.address, customer.city].filter(Boolean).join(", ")}</span></div>}
                 <div className="flex items-center gap-2 text-sm text-muted-foreground"><Calendar className="w-4 h-4" /><span>Joined {new Date(customer.joinedDate).toLocaleDateString()}</span></div>
                 <Separator />
@@ -293,7 +294,7 @@ export default function CustomersPage() {
             <div className="grid gap-2"><Label>Name *</Label><Input value={formData.name} onChange={(e) => setFormData(p => ({ ...p, name: e.target.value }))} placeholder="Customer name" /></div>
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2"><Label>Email</Label><Input value={formData.email} onChange={(e) => setFormData(p => ({ ...p, email: e.target.value }))} placeholder="email@example.com" /></div>
-              <div className="grid gap-2"><Label>Phone</Label><Input value={formData.phone} onChange={(e) => setFormData(p => ({ ...p, phone: e.target.value }))} placeholder="+92 300 0000000" /></div>
+              <PhoneInput id="add-phone" label="Phone" value={formData.phone} onChange={(v) => setFormData(p => ({ ...p, phone: v }))} />
             </div>
             <div className="grid gap-2"><Label>Address</Label><Input value={formData.address} onChange={(e) => setFormData(p => ({ ...p, address: e.target.value }))} placeholder="Street address" /></div>
             <div className="grid grid-cols-2 gap-4">
@@ -318,7 +319,7 @@ export default function CustomersPage() {
               <div className="grid gap-2"><Label>Name *</Label><Input value={editingCustomer.name ?? ""} onChange={(e) => setEditingCustomer({ ...editingCustomer, name: e.target.value })} /></div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="grid gap-2"><Label>Email</Label><Input value={editingCustomer.email ?? ""} onChange={(e) => setEditingCustomer({ ...editingCustomer, email: e.target.value })} /></div>
-                <div className="grid gap-2"><Label>Phone</Label><Input value={editingCustomer.phone ?? ""} onChange={(e) => setEditingCustomer({ ...editingCustomer, phone: e.target.value })} /></div>
+                <PhoneInput id="edit-phone" label="Phone" value={editingCustomer.phone || "92"} onChange={(v) => setEditingCustomer({ ...editingCustomer, phone: v })} />
               </div>
               <div className="grid gap-2"><Label>Address</Label><Input value={editingCustomer.address ?? ""} onChange={(e) => setEditingCustomer({ ...editingCustomer, address: e.target.value })} /></div>
               <div className="grid grid-cols-2 gap-4">

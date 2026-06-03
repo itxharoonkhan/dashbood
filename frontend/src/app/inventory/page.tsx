@@ -66,10 +66,11 @@ function ComboInput({ value, onChange, options, placeholder }: {
     ? options
     : options.filter(o => o.toLowerCase().includes(query.toLowerCase()))
 
-  // Close on outside click
+  // Close on outside click — commit typed value if any
   React.useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) {
+        if (query.trim()) onChange(query.trim())
         setOpen(false)
         setIsFocused(false)
         setQuery("")
@@ -77,7 +78,7 @@ function ComboInput({ value, onChange, options, placeholder }: {
     }
     document.addEventListener("mousedown", handler)
     return () => document.removeEventListener("mousedown", handler)
-  }, [])
+  }, [query, onChange])
 
   const handleFocus = () => {
     setIsFocused(true)
@@ -103,7 +104,11 @@ function ComboInput({ value, onChange, options, placeholder }: {
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") { setOpen(false); setIsFocused(false); setQuery("") }
-    if (e.key === "Enter" && filtered.length === 1) { handleSelect(filtered[0]); e.preventDefault() }
+    if (e.key === "Enter") {
+      e.preventDefault()
+      if (filtered.length === 1) { handleSelect(filtered[0]) }
+      else if (query.trim()) { handleSelect(query.trim()) }
+    }
   }
 
   return (
@@ -115,6 +120,15 @@ function ComboInput({ value, onChange, options, placeholder }: {
           onChange={e => handleInput(e.target.value)}
           onFocus={handleFocus}
           onKeyDown={handleKeyDown}
+          onBlur={() => {
+            // Small delay taake dropdown click pehle fire ho sake
+            setTimeout(() => {
+              if (query.trim()) onChange(query.trim())
+              setIsFocused(false)
+              setQuery("")
+              setOpen(false)
+            }, 150)
+          }}
           placeholder={isFocused ? "Search or type..." : placeholder}
           className="rounded-r-none border-r-0 combo-field"
         />
@@ -138,7 +152,13 @@ function ComboInput({ value, onChange, options, placeholder }: {
               {opt === value && <span className="float-right text-accent text-xs">✓</span>}
             </div>
           )) : (
-            <div className="px-3 py-2 text-sm text-muted-foreground italic">Press Enter to use "{query}"</div>
+            <div
+              onMouseDown={() => query.trim() && handleSelect(query.trim())}
+              className="px-3 py-2 text-sm cursor-pointer flex items-center gap-2 text-primary hover:bg-primary/10 transition-colors"
+            >
+              <span className="text-base leading-none">+</span>
+              <span>Add "<strong>{query}</strong>" as new category</span>
+            </div>
           )}
         </div>
       )}
@@ -154,6 +174,8 @@ export default function InventoryPage() {
   const [searchTerm, setSearchTerm] = React.useState("")
   const [selectedCategory, setSelectedCategory] = React.useState("All")
   const [isAddOpen, setIsAddOpen] = React.useState(false)
+  const [suggestedSku, setSuggestedSku] = React.useState("")
+  const [skuEdited, setSkuEdited] = React.useState(false)
 
   const [editingProduct, setEditingProduct] = React.useState<Product | null>(null)
   const [labelProduct, setLabelProduct] = React.useState<Product | null>(null)
@@ -303,6 +325,18 @@ export default function InventoryPage() {
     fetchProducts()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Jab Add Product dialog khule — next SKU suggest karo
+  React.useEffect(() => {
+    if (!isAddOpen) { setSuggestedSku(""); setSkuEdited(false); return }
+    api.get('/products/next-sku').then(res => {
+      if (res.data.success) {
+        setSuggestedSku(res.data.sku)
+        setNewProduct(prev => ({ ...prev, sku: res.data.sku }))
+        setSkuEdited(false)
+      }
+    }).catch(() => {})
+  }, [isAddOpen])
 
   const getStatus = (stock: number, minStock: number): Product["status"] => {
     if (stock <= 0) return "out-of-stock"
@@ -820,8 +854,29 @@ export default function InventoryPage() {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="grid gap-2">
-                <Label htmlFor="sku">{t('inventory.sku')} <span className="text-xs text-muted-foreground">(Category se auto-generate)</span></Label>
-                <Input id="sku" value={newProduct.sku} onChange={(e) => setNewProduct({ ...newProduct, sku: e.target.value })} placeholder="Category select karo..." />
+                <Label htmlFor="sku" className="flex items-center gap-2">
+                  {t('inventory.sku')}
+                  {!skuEdited && suggestedSku && (
+                    <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-primary/10 text-primary">
+                      Auto
+                    </span>
+                  )}
+                </Label>
+                <Input
+                  id="sku"
+                  value={newProduct.sku ?? ""}
+                  onChange={(e) => {
+                    setSkuEdited(true)
+                    setNewProduct({ ...newProduct, sku: e.target.value })
+                  }}
+                  placeholder="e.g. 008"
+                  className={!skuEdited && suggestedSku ? "text-muted-foreground font-normal" : ""}
+                />
+                {!skuEdited && suggestedSku && (
+                  <p className="text-[11px] text-muted-foreground -mt-1">
+                    Next suggested SKU — type karo change karne ke liye
+                  </p>
+                )}
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="barcode">Barcode</Label>
@@ -980,19 +1035,12 @@ export default function InventoryPage() {
               </div>
               <div className="grid gap-2">
                 <Label>Category</Label>
-                <Select
+                <ComboInput
                   value={editingProduct.category ?? ""}
-                  onValueChange={(value) => setEditingProduct({ ...editingProduct, category: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {categories.filter(c => c !== "All").map(c => (
-                      <SelectItem key={c} value={c}>{c}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  onChange={(value) => setEditingProduct({ ...editingProduct, category: value })}
+                  options={categories.filter(c => c !== "All")}
+                  placeholder="Select or type category"
+                />
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="grid gap-2">

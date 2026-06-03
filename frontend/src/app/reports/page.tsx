@@ -2,7 +2,8 @@
 
 import * as React from "react"
 import { useRouter } from "next/navigation"
-import { DollarSign, TrendingUp, ShoppingCart, Users, Calendar, Download, FileBarChart, Loader2 } from "lucide-react"
+import { DollarSign, TrendingUp, ShoppingCart, Users, Calendar, Download, FileBarChart, Loader2, BarChart3 } from "lucide-react"
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -27,32 +28,23 @@ export default function ReportsPage() {
   const [categoryData, setCategoryData] = React.useState<any[]>([])
   const [taxSummary, setTaxSummary] = React.useState<any>(null)
   const [profitLoss, setProfitLoss] = React.useState<any>(null)
-  const [returnsData, setReturnsData] = React.useState<any[]>([])
   const [loading, setLoading] = React.useState(true)
 
-  // Check if user is admin
   React.useEffect(() => {
     const role = localStorage.getItem('userRole')
-    if (role !== 'admin') {
-      router.replace('/dashboard')
-    }
+    if (role !== 'admin') router.replace('/dashboard')
   }, [router])
 
   React.useEffect(() => {
     const fetchReports = async () => {
       try {
         setLoading(true)
-        // Use consolidated endpoint to avoid 429 errors
         const res = await api.get(`/reports/all?period=${period}`)
         const { salesPerformance, categoryDistribution, taxSummary: taxData, profitLoss: profitData } = res.data.data
-
         setSalesData(salesPerformance || [])
         setCategoryData(categoryDistribution || [])
         setTaxSummary(taxData || {})
         setProfitLoss(profitData || {})
-
-        const returnsRes = await api.get('/sales/returns/list').catch(() => null)
-        if (returnsRes?.data?.success) setReturnsData(returnsRes.data.data)
       } catch (err) {
         console.error('Failed to fetch reports:', err)
       } finally {
@@ -63,8 +55,6 @@ export default function ReportsPage() {
   }, [period])
 
   const totalSales = profitLoss?.total_revenue || salesData.reduce((sum: number, d: any) => sum + (parseFloat(d.revenue) || 0), 0)
-  const maxSales = salesData.length > 0 ? Math.max(...salesData.map((d: any) => parseFloat(d.revenue) || 0)) : 1
-
   const totalOrders = salesData.reduce((sum: number, d: any) => sum + (parseInt(d.total_sales) || 0), 0)
   const avgOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0
   const profitMargin = profitLoss?.profit_margin || 0
@@ -352,185 +342,221 @@ export default function ReportsPage() {
         </Card>
       </div>
 
+      {/* ── Row 1: Daily Breakdown + Sales by Category side by side ── */}
       <div className="grid gap-4 lg:grid-cols-2">
-        {/* Daily Breakdown Table */}
-        <Card>
-          <CardHeader><CardTitle>Daily Sales Breakdown</CardTitle></CardHeader>
-          <CardContent>
+
+        {/* Daily Sales Breakdown */}
+        <Card className="flex flex-col">
+          <CardHeader className="pb-3 shrink-0">
+            <CardTitle className="flex items-center gap-2">
+              <BarChart3 className="w-5 h-5 text-primary" />
+              Daily Sales Breakdown
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex-1 p-0 overflow-hidden">
             {salesData.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">No sales data available</p>
+              <p className="text-center text-muted-foreground py-8 px-4">No sales data available</p>
             ) : (
-              <div className="rounded-md border border-white">
-                <div className="grid grid-cols-3 gap-4 p-4 bg-muted/50 font-medium text-sm">
+              <>
+                {/* Sticky header */}
+                <div className="grid grid-cols-3 gap-4 px-4 py-2.5 bg-muted/50 border-y text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                   <div>Day</div>
                   <div>Revenue</div>
                   <div>Orders</div>
                 </div>
-                <div className="divide-y">
-                  {salesData.map((day: any, idx: number) => (
-                    <div key={idx} className="grid grid-cols-3 gap-4 p-4 items-center hover:bg-muted/30 transition-colors">
-                      <div className="font-medium">{new Date(day.date).toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' })}</div>
-                      <div className="font-semibold text-primary">Rs. {(parseFloat(day.revenue) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
-                      <div className="text-muted-foreground">{parseInt(day.total_sales) || 0}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Sales Chart */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Calendar className="w-5 h-5 text-primary" />
-              Sales Overview
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {salesData.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">No sales data to display</p>
-            ) : (
-              <div className="h-64 flex items-end gap-2 pt-4">
-                {salesData.map((day: any, index: number) => {
-                  const revenue = parseFloat(day.revenue) || 0
-                  const height = (revenue / maxSales) * 200
-                  return (
-                    <div key={index} className="flex-1 flex flex-col items-center gap-2 group">
-                      <div className="relative w-full flex justify-center">
-                        <div
-                          className="w-full max-w-[50px] bg-gradient-to-t from-primary/80 to-primary rounded-t-lg transition-all duration-300 group-hover:from-primary group-hover:to-secondary cursor-pointer relative"
-                          style={{ height: `${height}px` }}
-                        >
-                          <div className="absolute -top-12 left-1/2 -translate-x-1/2 bg-card border border-white rounded-lg px-3 py-2 opacity-0 group-hover:opacity-100 transition-opacity shadow-lg whitespace-nowrap z-10">
-                            <p className="text-xs font-bold text-foreground">Rs. {revenue.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
-                          </div>
+                {/* Scrollable rows — ~4-5 rows then scroll */}
+                <ScrollArea className="h-[352px]">
+                  <div className="divide-y">
+                    {salesData.map((day: any, idx: number) => (
+                      <div key={idx} className="grid grid-cols-3 gap-4 px-4 py-3 items-center hover:bg-muted/30 transition-colors text-sm">
+                        <div className="font-medium text-foreground">
+                          {new Date(day.date).toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' })}
                         </div>
+                        <div className="font-semibold text-primary">
+                          Rs. {(parseFloat(day.revenue) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                        </div>
+                        <div className="text-muted-foreground">{parseInt(day.total_sales) || 0}</div>
                       </div>
-                      <span className="text-xs text-muted-foreground font-medium">{new Date(day.date).toLocaleDateString('en', { weekday: 'short' })}</span>
-                    </div>
-                  )
-                })}
-              </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </>
             )}
           </CardContent>
         </Card>
-      </div>
 
-      <div className="grid gap-4 grid-cols-1">
-        {/* Category Breakdown */}
-        <Card className="w-full">
-          <CardHeader>
+        {/* Sales by Category */}
+        <Card className="flex flex-col">
+          <CardHeader className="pb-3 shrink-0">
             <CardTitle className="flex items-center gap-2">
               <FileBarChart className="w-5 h-5 text-primary" />
               Sales by Category
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="flex-1 p-0 overflow-hidden">
             {categoryData.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">No category data available</p>
+              <p className="text-center text-muted-foreground py-8 px-4">No category data available</p>
             ) : (
-              <div className="flex flex-col gap-8">
-                {/* Scrollable Category List */}
-                <ScrollArea className="h-[300px] w-full pr-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-4">
-                      {categoryData.map((cat: any, index: number) => {
-                        const colors = ['bg-cyan-500', 'bg-green-500', 'bg-orange-500', 'bg-pink-500', 'bg-purple-500']
-                        const color = colors[index % colors.length]
-                        const value = cat.value ? (parseFloat(cat.value) / totalSales) * 100 : 0
-                        return (
-                          <div key={cat.name || index} className="group p-3 rounded-xl border border-white/50 hover:border-white/30 hover:bg-primary/5 transition-all duration-300">
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="flex items-center gap-3">
-                                <div className={`w-10 h-10 rounded-lg ${color} flex items-center justify-center shadow-md group-hover:scale-110 transition-transform`}>
-                                  <span className="text-white font-bold text-xs">{value.toFixed(0)}%</span>
-                                </div>
-                                <div>
-                                  <p className="font-semibold text-sm text-foreground">{cat.name || 'Unknown'}</p>
-                                </div>
+              <>
+                <ScrollArea className="h-[220px] px-4 pt-1">
+                  <div className="space-y-2.5 pb-4">
+                    {categoryData.map((cat: any, index: number) => {
+                      const colors = ['bg-cyan-500', 'bg-green-500', 'bg-orange-500', 'bg-pink-500', 'bg-purple-500']
+                      const color = colors[index % colors.length]
+                      const value = cat.value ? (parseFloat(cat.value) / totalSales) * 100 : 0
+                      return (
+                        <div key={cat.name || index} className="group p-3 rounded-xl border border-white/50 hover:border-white/30 hover:bg-primary/5 transition-all duration-300">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2.5">
+                              <div className={`w-9 h-9 rounded-lg ${color} flex items-center justify-center shadow-md shrink-0`}>
+                                <span className="text-white font-bold text-xs">{value.toFixed(0)}%</span>
                               </div>
-                              <div className="text-right">
-                                <p className="font-bold text-primary text-sm">Rs. {(parseFloat(cat.value) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
-                              </div>
+                              <p className="font-semibold text-sm text-foreground">{cat.name || 'Unknown'}</p>
                             </div>
-                            <div className="w-full h-2 bg-muted/50 rounded-full overflow-hidden">
-                              <div className={`h-full ${color} rounded-full transition-all duration-700 ease-out`} style={{ width: `${value}%` }} />
-                            </div>
+                            <p className="font-bold text-primary text-sm shrink-0">
+                              Rs. {(parseFloat(cat.value) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                            </p>
                           </div>
-                        )
-                      })}
+                          <div className="w-full h-1.5 bg-muted/50 rounded-full overflow-hidden">
+                            <div className={`h-full ${color} rounded-full transition-all duration-700 ease-out`} style={{ width: `${value}%` }} />
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 </ScrollArea>
 
-                {/* Centered Revenue Box */}
-                <div className="flex justify-center">
-                  <div className="w-full max-w-sm bg-gradient-to-br from-primary/5 to-secondary/5 rounded-xl p-4 border border-white/20 text-center shadow-inner">
-                    <p className="text-xs text-muted-foreground mb-1">Total Revenue</p>
-                    <p className="text-2xl font-extrabold text-primary mb-1">Rs. {totalSales.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
-                    {profitLoss && (
-                      <>
-                        <Separator className="my-3 bg-primary/10" />
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-0.5">
-                            <p className="text-xs text-muted-foreground">Total Cost</p>
-                            <p className="text-base font-bold text-foreground">Rs. {(parseFloat(profitLoss.total_cost) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
-                          </div>
-                          <div className="space-y-0.5">
-                            <p className="text-xs text-muted-foreground">Net Profit</p>
-                            <p className="text-base font-bold text-green-600">Rs. {(parseFloat(profitLoss.gross_profit) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
-                          </div>
+                {/* Total Amount Box */}
+                <div className="mx-4 mb-4 mt-2 rounded-xl bg-gradient-to-br from-primary/8 to-secondary/8 border border-white/20 p-3 text-center">
+                  <p className="text-[11px] text-muted-foreground mb-0.5">Total Revenue</p>
+                  <p className="text-xl font-extrabold text-primary leading-tight">
+                    Rs. {totalSales.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </p>
+                  {profitLoss && (
+                    <>
+                      <Separator className="my-2 bg-primary/10" />
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <p className="text-[10px] text-muted-foreground">Total Cost</p>
+                          <p className="text-sm font-bold text-foreground">
+                            Rs. {(parseFloat(profitLoss.total_cost) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                          </p>
                         </div>
-                      </>
-                    )}
-                  </div>
+                        <div>
+                          <p className="text-[10px] text-muted-foreground">Net Profit</p>
+                          <p className="text-sm font-bold text-green-600">
+                            Rs. {(parseFloat(profitLoss.gross_profit) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
-              </div>
+              </>
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Return History */}
-      <Card className="w-full">
+      {/* ── Row 2: Sales Overview chart (full width) ── */}
+      <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <ShoppingCart className="w-5 h-5 text-red-500" />
-            Return History
+            <Calendar className="w-5 h-5 text-primary" />
+            Sales Overview
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {returnsData.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">Koi return nahi mila</p>
+          {salesData.length === 0 ? (
+            <p className="text-center text-muted-foreground py-8">No sales data to display</p>
           ) : (
-            <div className="rounded-md border border-border overflow-hidden">
-              <div className="grid grid-cols-5 gap-3 p-3 bg-muted/50 font-medium text-xs text-muted-foreground uppercase tracking-wider">
-                <div>Return #</div>
-                <div>Sale #</div>
-                <div>Customer</div>
-                <div>Date</div>
-                <div className="text-right">Refund</div>
+            <>
+              <div className="mb-3 text-xs text-muted-foreground">
+                <span>{salesData.length} day{salesData.length !== 1 ? 's' : ''} of data</span>
               </div>
-              <div className="divide-y divide-border">
-                {returnsData.map((ret: any) => (
-                  <div key={ret.id} className="grid grid-cols-5 gap-3 p-3 items-center hover:bg-muted/20 transition-colors text-sm">
-                    <div className="font-semibold text-muted-foreground">#{ret.id}</div>
-                    <div className="font-medium">Sale #{ret.sale_id}</div>
-                    <div className="text-muted-foreground truncate">{ret.customer_name || 'Walk-in'}</div>
-                    <div className="text-muted-foreground">{new Date(ret.return_date).toLocaleDateString()}</div>
-                    <div className="text-right font-bold text-red-500">-Rs. {parseFloat(ret.refund_amount).toFixed(2)}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="p-3 bg-muted/30 flex justify-between items-center text-sm font-semibold border-t border-border">
-                <span>Total Returns: {returnsData.length}</span>
-                <span className="text-red-500">Total Refunded: Rs. {returnsData.reduce((s: number, r: any) => s + parseFloat(r.refund_amount || 0), 0).toFixed(2)}</span>
-              </div>
-            </div>
+              <ResponsiveContainer width="100%" height={280}>
+                <AreaChart
+                  data={salesData.map((day: any) => ({
+                    label: new Date(day.date).toLocaleDateString('en', salesData.length <= 14 ? { weekday: 'short' } : { month: 'short', day: 'numeric' }),
+                    revenue: parseFloat(day.revenue) || 0,
+                  }))}
+                  margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                >
+                  <defs>
+                    <linearGradient id="revenueGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.25} />
+                      <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                  <XAxis
+                    dataKey="label"
+                    tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+                    tickLine={false}
+                    axisLine={false}
+                    interval={salesData.length <= 14 ? 0 : salesData.length <= 31 ? 2 : 6}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+                    tickLine={false}
+                    axisLine={false}
+                    width={50}
+                    tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
+                  />
+                  <Tooltip
+                    content={({ active, payload, label }: any) => {
+                      if (active && payload && payload.length) {
+                        return (
+                          <div className="bg-card border border-border rounded-lg px-3 py-2 shadow-lg">
+                            <p className="text-xs text-muted-foreground mb-1">{label}</p>
+                            <p className="text-sm font-bold text-foreground">
+                              Rs. {(payload[0].value as number).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                            </p>
+                          </div>
+                        )
+                      }
+                      return null
+                    }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="revenue"
+                    stroke="hsl(var(--primary))"
+                    strokeWidth={2.5}
+                    fill="url(#revenueGradient)"
+                    dot={false}
+                    activeDot={{ r: 5, fill: 'hsl(var(--primary))', stroke: 'hsl(var(--background))', strokeWidth: 2 }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </>
           )}
         </CardContent>
       </Card>
-    </div>
+
+      {/* ── Revenue Summary bar ── */}
+      <div className="bg-gradient-to-r from-primary/5 to-secondary/5 rounded-xl p-4 border border-white/20 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="text-center sm:text-left">
+          <p className="text-xs text-muted-foreground">Total Revenue</p>
+          <p className="text-2xl font-extrabold text-primary">Rs. {totalSales.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
+        </div>
+        {profitLoss && (
+          <>
+            <Separator orientation="vertical" className="hidden sm:block h-12 bg-border" />
+            <div className="text-center">
+              <p className="text-xs text-muted-foreground">Total Cost</p>
+              <p className="text-lg font-bold text-foreground">Rs. {(parseFloat(profitLoss.total_cost) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
+            </div>
+            <Separator orientation="vertical" className="hidden sm:block h-12 bg-border" />
+            <div className="text-center">
+              <p className="text-xs text-muted-foreground">Net Profit</p>
+              <p className="text-lg font-bold text-green-600">Rs. {(parseFloat(profitLoss.gross_profit) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
+            </div>
+          </>
+        )}
+      </div>
+
+      </div>
     </ProtectedRoute>
   )
 }

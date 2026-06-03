@@ -3,7 +3,14 @@ import * as React from "react"
 import { cn } from "@/lib/utils"
 
 const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
-  ({ className, type, ...props }, ref) => {
+  ({ className, type, onInput, ...props }, ref) => {
+    const handleInput = (e: React.FormEvent<HTMLInputElement>) => {
+      if (type === "number" && e.currentTarget.value.replace("-", "").replace(".", "").length > 12) {
+        e.currentTarget.value = e.currentTarget.value.slice(0, e.currentTarget.value.startsWith("-") ? 13 : 12)
+      }
+      onInput?.(e)
+    }
+
     return (
       <input
         type={type}
@@ -12,6 +19,7 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
           className
         )}
         ref={ref}
+        onInput={handleInput}
         {...props}
       />
     )

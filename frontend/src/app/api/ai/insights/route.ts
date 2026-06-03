@@ -27,16 +27,26 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
     }
 
-    // Attempt generation with retries to handle 503 errors
     const response = await generateWithRetry(prompt);
-    
+
+    if (!response) {
+      return NextResponse.json({ error: 'AI service unavailable, please try again later.' }, { status: 503 });
+    }
+
     return NextResponse.json({ text: response.text });
   } catch (error: any) {
     console.error('❌ AI API Route Error:', error);
-    
-    return NextResponse.json({ 
-      error: 'AI Insight failed', 
-      details: error.message 
+
+    const is503 = error.message?.includes('503') || error.details?.includes('503');
+    if (is503) {
+      return NextResponse.json({
+        error: 'AI service is currently busy. Please try again in a few seconds.'
+      }, { status: 503 });
+    }
+
+    return NextResponse.json({
+      error: 'AI Insight failed',
+      details: error.message
     }, { status: 500 });
   }
 }

@@ -44,7 +44,7 @@ export default function SignupPage() {
     { label: "One symbol (!@#$%^&*)", test: (p: string) => /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(p) },
   ]
 
-  const isEmailValid = (email: string) => /^[^\s@]+@[^\s@]+\.(com|org)$/i.test(email)
+  const isEmailValid = (email: string) => /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)
 
   const handleChange = (field: string, value: any) => {
     setFormData(prev => ({ ...prev, [field]: value }))
@@ -66,7 +66,7 @@ export default function SignupPage() {
     if (!isEmailValid(formData.email)) {
       toast({
         title: "Invalid Email",
-        description: "Email must end with .com or .org (e.g. user@example.com)",
+        description: "Please enter a valid email address (e.g. user@example.com)",
         variant: "destructive"
       })
       return

@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Image from "next/image"
-import { Search, Minus, Plus, Trash2, ShoppingCart, Bell, Settings, LogOut, Printer, ChevronDown, ChevronUp, Globe, ScanLine, Camera } from "lucide-react"
+import { Search, Minus, Plus, Trash2, ShoppingCart, Bell, Settings, LogOut, Printer, ChevronDown, ChevronUp, Globe, ScanLine } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
@@ -16,7 +16,6 @@ import { useRouter } from "next/navigation"
 import ProtectedRoute from "@/components/protected-route"
 import { PaymentDialog } from "@/components/sales/payment-dialog"
 import { ReceiptPrintDialog } from "@/components/sales/receipt-print-dialog"
-import { CameraScanner } from "@/components/sales/camera-scanner"
 import api from "@/lib/api"
 
 interface CartItem {
@@ -103,8 +102,6 @@ export default function POSPage() {
   const [barcodeLoading, setBarcodeLoading] = React.useState(false)
   const barcodeRef = React.useRef<HTMLInputElement>(null)
   const searchRef  = React.useRef<HTMLInputElement>(null)
-  const [isCameraOpen, setIsCameraOpen] = React.useState(false)
-
   // Selected cart item for +/- shortcuts
   const [selectedCartId, setSelectedCartId] = React.useState<string | null>(null)
 
@@ -265,13 +262,46 @@ export default function POSPage() {
         setMenuLoading(true)
         const res = await api.get('/menu')
         const items = res.data.data.items || []
+        // Keyword → specific ice cream image
+        const KEYWORD_IMGS: [string, string][] = [
+          ["chocolate",    "https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=400&h=250&fit=crop"],
+          ["choco",        "https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=400&h=250&fit=crop"],
+          ["vanilla",      "https://images.unsplash.com/photo-1570197788417-0e82375c9371?w=400&h=250&fit=crop"],
+          ["strawberry",   "https://images.unsplash.com/photo-1497034825429-c343d7c6a68f?w=400&h=250&fit=crop"],
+          ["mango",        "https://images.unsplash.com/photo-1501443762994-82bd5dace89a?w=400&h=250&fit=crop"],
+          ["mint",         "https://images.unsplash.com/photo-1563805042-7684c019e1cb?w=400&h=250&fit=crop"],
+          ["pista",        "https://images.unsplash.com/photo-1567206563114-c179f2d59a9c?w=400&h=250&fit=crop"],
+          ["pistachio",    "https://images.unsplash.com/photo-1567206563114-c179f2d59a9c?w=400&h=250&fit=crop"],
+          ["kulfi",        "https://images.unsplash.com/photo-1488900128323-21503983a07e?w=400&h=250&fit=crop"],
+          ["butterscotch", "https://images.unsplash.com/photo-1501443762994-82bd5dace89a?w=400&h=250&fit=crop"],
+          ["kesar",        "https://images.unsplash.com/photo-1501443762994-82bd5dace89a?w=400&h=250&fit=crop"],
+          ["rainbow",      "https://images.unsplash.com/photo-1563805042-7684c019e1cb?w=400&h=250&fit=crop"],
+          ["cone",         "https://images.unsplash.com/photo-1497034825429-c343d7c6a68f?w=400&h=250&fit=crop"],
+          ["gelato",       "https://images.unsplash.com/photo-1567206563114-c179f2d59a9c?w=400&h=250&fit=crop"],
+          ["sorbet",       "https://images.unsplash.com/photo-1563805042-7684c019e1cb?w=400&h=250&fit=crop"],
+        ]
+        // Fallback pool — rotates by product id
+        const FALLBACK_POOL = [
+          "https://images.unsplash.com/photo-1563805042-7684c019e1cb?w=400&h=250&fit=crop",
+          "https://images.unsplash.com/photo-1497034825429-c343d7c6a68f?w=400&h=250&fit=crop",
+          "https://images.unsplash.com/photo-1570197788417-0e82375c9371?w=400&h=250&fit=crop",
+          "https://images.unsplash.com/photo-1501443762994-82bd5dace89a?w=400&h=250&fit=crop",
+          "https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=400&h=250&fit=crop",
+          "https://images.unsplash.com/photo-1488900128323-21503983a07e?w=400&h=250&fit=crop",
+          "https://images.unsplash.com/photo-1567206563114-c179f2d59a9c?w=400&h=250&fit=crop",
+        ]
+        const getImg = (name: string, id: number) => {
+          const lower = name.toLowerCase()
+          const match = KEYWORD_IMGS.find(([kw]) => lower.includes(kw))
+          return match ? match[1] : FALLBACK_POOL[id % FALLBACK_POOL.length]
+        }
         const menuData = items.map((item: any, index: number) => ({
           id: item.id || index + 1,
           name: item.name,
           category: item.category || 'General',
           price: parseFloat(item.price) || 0,
           stock: parseInt(item.stock) || 0,
-          img: item.image || `https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=250&fit=crop`,
+          img: item.image || getImg(item.name || "", item.id || index),
           has_variants: item.has_variants || false,
           variants: item.variants || [],
         }))
@@ -638,15 +668,6 @@ export default function POSPage() {
                   disabled={barcodeLoading}
                 />
               </div>
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-10 w-10 rounded-full border-white bg-muted/50 hover:bg-primary/10 hover:border-primary flex-shrink-0"
-                onClick={() => setIsCameraOpen(true)}
-                title="Camera se scan karo"
-              >
-                <Camera className="h-4 w-4" />
-              </Button>
             </div>
           </div>
 
@@ -702,15 +723,6 @@ export default function POSPage() {
           </div>
         </div>
       </header>
-
-      <CameraScanner
-        open={isCameraOpen}
-        onClose={() => setIsCameraOpen(false)}
-        onDetected={(code) => {
-          setIsCameraOpen(false)
-          handleBarcodeSearch(code)
-        }}
-      />
 
       <PaymentDialog
         open={isPaymentOpen}
@@ -822,7 +834,7 @@ export default function POSPage() {
             <CardHeader className="pb-2 xs:pb-3 border-b border-white flex-shrink-0">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm xs:text-base sm:text-lg font-bold text-foreground flex items-center gap-1.5 xs:gap-2">
-                  <span className="text-base xs:text-lg sm:text-xl">🍕</span>
+                  <span className="text-base xs:text-lg sm:text-xl">🍦</span>
                   <span className="hidden xs:inline">{t('menu.title')}</span>
                   <span className="xs:hidden">Menu</span>
                 </CardTitle>
@@ -1011,19 +1023,19 @@ export default function POSPage() {
                       <div className="flex-1 min-w-0 mr-1.5 xs:mr-2">
                         <p className="font-medium text-xs xs:text-xs md:text-sm text-foreground truncate">{item.name}</p>
                         <div className="flex items-center gap-2 mt-1">
-                          <div className="flex items-center gap-1 bg-card rounded-full shadow-sm border border-white">
+                          <div className="flex items-center gap-0.5 bg-card rounded-full shadow-sm border border-white">
                             <button
-                              onClick={() => updateQuantity(item.id, -1)}
-                              className="w-6 h-6 rounded-full hover:bg-primary/10 flex items-center justify-center transition-colors active:scale-90"
+                              onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, -1) }}
+                              className="w-8 h-8 xs:w-9 xs:h-9 rounded-full hover:bg-primary/10 flex items-center justify-center transition-colors active:scale-90 touch-target-sm"
                             >
-                              <Minus className="w-2.5 h-2.5 text-primary" />
+                              <Minus className="w-3 h-3 text-primary" />
                             </button>
-                            <span className="w-4 text-center text-[10px] font-bold text-foreground">{item.quantity}</span>
+                            <span className="w-5 text-center text-xs font-bold text-foreground">{item.quantity}</span>
                             <button
-                              onClick={() => updateQuantity(item.id, 1)}
-                              className="w-6 h-6 rounded-full hover:bg-primary/10 flex items-center justify-center transition-colors active:scale-90"
+                              onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, 1) }}
+                              className="w-8 h-8 xs:w-9 xs:h-9 rounded-full hover:bg-primary/10 flex items-center justify-center transition-colors active:scale-90 touch-target-sm"
                             >
-                              <Plus className="w-2.5 h-2.5 text-primary" />
+                              <Plus className="w-3 h-3 text-primary" />
                             </button>
                           </div>
                           <p className="text-[10px] md:text-xs text-muted-foreground">x Rs. {Number(item.price).toFixed(2)}</p>
@@ -1032,11 +1044,11 @@ export default function POSPage() {
                       <div className="flex items-center gap-1.5 xs:gap-2 flex-shrink-0">
                         <span className="font-bold text-primary text-xs xs:text-xs md:text-sm">Rs. {(Number(item.price) * item.quantity).toFixed(2)}</span>
                         <button
-                          onClick={() => removeFromCart(item.id)}
-                          className="w-8 h-8 xs:w-8 xs:h-8 rounded-full hover:bg-destructive/20 flex items-center justify-center transition-colors active:scale-90 touch-target-sm"
+                          onClick={(e) => { e.stopPropagation(); removeFromCart(item.id) }}
+                          className="w-9 h-9 rounded-full hover:bg-destructive/20 flex items-center justify-center transition-colors active:scale-90 touch-target-sm"
                           aria-label="Remove item"
                         >
-                          <Trash2 className="w-4 h-4 xs:w-4 xs:h-4 text-destructive" />
+                          <Trash2 className="w-4 h-4 text-destructive" />
                         </button>
                       </div>
                     </div>
@@ -1071,6 +1083,24 @@ export default function POSPage() {
           </CardContent>
 
           <CardFooter className="flex-col bg-muted/30 p-2 xs:p-3 md:p-4 space-y-2 xs:space-y-2.5 sm:space-y-3 border-t border-white flex-shrink-0 safe-bottom">
+            {/* On-screen shortcut buttons — only on touch devices */}
+            <div className="touch-shortcut-bar w-full gap-2 mb-1">
+              <button
+                onClick={() => searchRef.current?.focus()}
+                className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-lg border border-border bg-muted/50 text-xs font-medium text-muted-foreground active:scale-95 transition-transform"
+              >
+                <Search className="w-3.5 h-3.5" />
+                Search (F2)
+              </button>
+              <button
+                onClick={() => { if (!isPaymentOpen && cart.length > 0) setIsPaymentOpen(true) }}
+                disabled={cart.length === 0}
+                className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-lg border border-primary/30 bg-primary/10 text-xs font-medium text-primary active:scale-95 transition-transform disabled:opacity-40"
+              >
+                <ShoppingCart className="w-3.5 h-3.5" />
+                Pay Now (F4)
+              </button>
+            </div>
             {/* Action Buttons */}
             <div className="grid grid-cols-3 gap-1.5 xs:gap-2 w-full">
               <Button

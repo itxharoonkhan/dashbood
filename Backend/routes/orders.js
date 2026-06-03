@@ -185,6 +185,33 @@ router.post('/:id/items', checkRole(['admin', 'cashier']), async (req, res) => {
 });
 
 // ===============================
+// PATCH reduce / void a single sent item
+// ===============================
+router.patch('/:id/items/:itemId', checkRole(['admin', 'cashier']), async (req, res) => {
+  const orderId = parseInt(req.params.id);
+  const itemId  = parseInt(req.params.itemId);
+  const { quantity } = req.body;
+  try {
+    const [orders] = await db.query('SELECT status FROM restaurant_orders WHERE id = ?', [orderId]);
+    if (!orders.length) return res.status(404).json({ success: false, message: 'Order not found' });
+    if (orders[0].status === 'paid') return res.status(400).json({ success: false, message: 'Order already completed' });
+
+    if (quantity === 0) {
+      await db.query('DELETE FROM restaurant_order_items WHERE id = ? AND order_id = ?', [itemId, orderId]);
+      return res.json({ success: true, message: 'Item voided' });
+    }
+    await db.query(
+      'UPDATE restaurant_order_items SET quantity = ? WHERE id = ? AND order_id = ?',
+      [quantity, itemId, orderId]
+    );
+    res.json({ success: true, message: 'Item quantity updated' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Error updating item' });
+  }
+});
+
+// ===============================
 // PUT update order notes / pax
 // ===============================
 router.put('/:id', checkRole(['admin', 'cashier']), async (req, res) => {
@@ -376,7 +403,8 @@ router.put('/:id/complete', checkRole(['admin', 'cashier']), async (req, res) =>
   try {
     await connection.beginTransaction();
 
-    const { payment_method = 'cash' } = req.body;
+    const { payment_method = 'cash', payments } = req.body;
+    const isSplit = Array.isArray(payments) && payments.length >= 2;
     const orderId = req.params.id;
 
     // 1. Verify order exists — must be 'billed' (bill print hona zaruri hai)
@@ -426,7 +454,7 @@ router.put('/:id/complete', checkRole(['admin', 'cashier']), async (req, res) =>
     const [saleResult] = await connection.query(
       `INSERT INTO sales (cashier_id, shift_id, total, discount, tax, final_total, payment_method, status, table_name, created_at)
        VALUES (?, ?, ?, 0, 0, ?, ?, 'completed', ?, NOW())`,
-      [req.user?.id || null, shiftId, total, total, payment_method, tableName]
+      [req.user?.id || null, shiftId, total, total, isSplit ? 'split' : payment_method, tableName]
     );
     const saleId = saleResult.insertId;
 
@@ -442,11 +470,20 @@ router.put('/:id/complete', checkRole(['admin', 'cashier']), async (req, res) =>
       );
     }
 
-    // 8. Insert sale_payments record
-    await connection.query(
-      'INSERT INTO sale_payments (sale_id, method, amount) VALUES (?, ?, ?)',
-      [saleId, payment_method, total]
-    );
+    // 8. Insert sale_payments record(s)
+    if (isSplit) {
+      for (const p of payments) {
+        await connection.query(
+          'INSERT INTO sale_payments (sale_id, method, amount) VALUES (?, ?, ?)',
+          [saleId, p.method, p.amount]
+        );
+      }
+    } else {
+      await connection.query(
+        'INSERT INTO sale_payments (sale_id, method, amount) VALUES (?, ?, ?)',
+        [saleId, payment_method, total]
+      );
+    }
 
     // 9. Mark restaurant order as paid + free table
     await connection.query("UPDATE restaurant_orders SET status = 'paid' WHERE id = ?", [orderId]);

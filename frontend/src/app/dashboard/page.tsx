@@ -36,6 +36,7 @@ import { DonutChart } from "@/components/DonutChart"
 import { useLanguage } from "@/contexts/language-context"
 import ProtectedRoute from "@/components/protected-route"
 import api from "@/lib/api"
+import { printReturnReceipt, generateReceiptHTML } from "@/lib/print-receipt"
 
 interface DashboardStats {
   todayRevenue: number
@@ -79,6 +80,9 @@ export default function DashboardPage() {
   const [returnReason, setReturnReason] = React.useState('')
   const [returnLoading, setReturnLoading] = React.useState(false)
   const [existingReturns, setExistingReturns] = React.useState<{ returns: any[], returned_qtys: Record<number, number> }>({ returns: [], returned_qtys: {} })
+  const [receiptStoreName, setReceiptStoreName] = React.useState("Elites POS")
+  const [receiptLogoUrl, setReceiptLogoUrl]     = React.useState("")
+  const [receiptFooterMsg, setReceiptFooterMsg] = React.useState("Thank you for your visit!")
 
   const openSaleDetail = async (sale: any) => {
     setSelectedSale(sale)
@@ -111,60 +115,22 @@ export default function DashboardPage() {
 
   const printReturnSlip = (returnId: number, refundAmount: number, returnedItems: { product_name: string, quantity: number, price: number }[], reason: string, pointsReversed = 0, pointsRestored = 0) => {
     const itemsSubtotal = returnedItems.reduce((s, i) => s + i.quantity * i.price, 0)
-    const taxPortion = parseFloat((refundAmount - itemsSubtotal).toFixed(2))
-    const win = window.open('', '_blank', 'width=400,height=600')
-    if (!win) return
-    win.document.write(`
-      <html><head><title>Return Receipt #${returnId}</title>
-      <style>
-        body { font-family: monospace; font-size: 13px; padding: 20px; max-width: 320px; margin: auto; }
-        h2 { text-align: center; margin-bottom: 4px; font-size: 18px; }
-        .center { text-align: center; }
-        .divider { border-top: 1px dashed #000; margin: 8px 0; }
-        table { width: 100%; border-collapse: collapse; }
-        th { text-align: left; font-size: 12px; padding: 4px 2px; }
-        td { padding: 4px 2px; font-size: 12px; }
-        .right { text-align: right; }
-        .bold { font-weight: bold; }
-        .total { font-weight: bold; font-size: 14px; }
-        @media print { body { padding: 0; } }
-      </style></head><body>
-      <h2>Elites POS</h2>
-      <p class="center" style="font-weight:bold;">*** RETURN RECEIPT ***</p>
-      <div class="divider"></div>
-      <p><b>Return #:</b> ${returnId}</p>
-      <p><b>Sale #:</b> INV-${String(selectedSale?.id || 0).padStart(6, '0')}</p>
-      <p><b>Customer:</b> ${selectedSale?.customer_name || 'Walk-in'}</p>
-      <p><b>Date:</b> ${new Date().toLocaleString()}</p>
-      ${reason ? `<p><b>Reason:</b> ${reason}</p>` : ''}
-      <div class="divider"></div>
-      <table>
-        <thead><tr><th>Item</th><th>Qty</th><th class="right">Price</th></tr></thead>
-        <tbody>
-          ${returnedItems.map(item => `
-            <tr>
-              <td>${item.product_name}</td>
-              <td>${item.quantity}</td>
-              <td class="right">Rs. ${(item.quantity * item.price).toFixed(2)}</td>
-            </tr>`).join('')}
-        </tbody>
-      </table>
-      <div class="divider"></div>
-      <table style="width:100%">
-        <tr><td>Items Subtotal:</td><td class="right">Rs. ${itemsSubtotal.toFixed(2)}</td></tr>
-        ${taxPortion > 0 ? `<tr><td>Tax (refunded):</td><td class="right">Rs. ${taxPortion.toFixed(2)}</td></tr>` : ''}
-        <tr style="color:#888"><td>Donation:</td><td class="right">Rs. 1.00 (non-refundable)</td></tr>
-        ${pointsRestored > 0 ? `<tr style="color:#16a34a"><td>&#9733; Loyalty Pts Restored:</td><td class="right">+${pointsRestored} pts</td></tr>` : ''}
-        ${pointsReversed > 0 ? `<tr style="color:#b45309"><td>&#9733; Loyalty Pts Reversed:</td><td class="right">-${pointsReversed} pts</td></tr>` : ''}
-      </table>
-      <div class="divider"></div>
-      <p class="total right">Total Refund: Rs. ${parseFloat(refundAmount.toString()).toFixed(2)}</p>
-      <div class="divider"></div>
-      <p class="center">Stock restored. Thank you!</p>
-      <script>window.onload = () => { window.print(); window.onafterprint = () => window.close(); }<\/script>
-      </body></html>
-    `)
-    win.document.close()
+    const taxRefunded   = parseFloat((refundAmount - itemsSubtotal).toFixed(2))
+    printReturnReceipt({
+      storeName:      receiptStoreName,
+      logoUrl:        receiptLogoUrl || undefined,
+      footerMsg:      receiptFooterMsg,
+      returnId,
+      saleId:         selectedSale?.id || 0,
+      customerName:   selectedSale?.customer_name || undefined,
+      reason:         reason || undefined,
+      items:          returnedItems.map(i => ({ name: i.product_name, quantity: i.quantity, price: i.price })),
+      itemsSubtotal,
+      taxRefunded:    taxRefunded > 0 ? taxRefunded : 0,
+      refundTotal:    parseFloat(refundAmount.toString()),
+      pointsRestored,
+      pointsReversed,
+    })
   }
 
   const processReturn = async () => {
@@ -215,70 +181,58 @@ export default function DashboardPage() {
   }
 
   const printReceipt = () => {
-    const sale = selectedSale
+    const sale  = selectedSale
     const items = saleDetail?.items || []
-    const win = window.open('', '_blank', 'width=400,height=600')
-    if (!win) return
-    win.document.write(`
-      <html><head><title>Receipt - Sale #${sale?.id}</title>
-      <style>
-        body { font-family: monospace; font-size: 13px; padding: 20px; max-width: 320px; margin: auto; }
-        h2 { text-align: center; margin-bottom: 4px; font-size: 18px; }
-        .center { text-align: center; }
-        .divider { border-top: 1px dashed #000; margin: 8px 0; }
-        table { width: 100%; border-collapse: collapse; }
-        th { text-align: left; font-size: 12px; padding: 4px 2px; }
-        td { padding: 4px 2px; font-size: 12px; }
-        .right { text-align: right; }
-        .total { font-weight: bold; font-size: 14px; }
-        @media print { body { padding: 0; } }
-      </style></head><body>
-      <h2>Elites POS</h2>
-      <p class="center">Sale Receipt</p>
-      <div class="divider"></div>
-      <p><b>Sale #:</b> ${sale?.id}</p>
-      <p><b>Customer:</b> ${sale?.customer_name || 'Walk-in'}</p>
-      <p><b>Payment:</b> ${
-        saleDetail?.payments?.length > 0
-          ? saleDetail.payments.map((p: any) => `${p.method.charAt(0).toUpperCase() + p.method.slice(1)}: Rs.${parseFloat(p.amount).toFixed(2)}`).join(' | ')
-          : (saleDetail?.sale?.payment_method || sale?.payment_method || '—')
-      }</p>
-      <p><b>Date:</b> ${sale?.sale_date ? new Date(sale.sale_date).toLocaleString() : '—'}</p>
-      <div class="divider"></div>
-      <table>
-        <thead><tr><th>Item</th><th>Qty</th><th class="right">Price</th></tr></thead>
-        <tbody>
-          ${items.length > 0
-            ? items.map((item: any) => `
-              <tr>
-                <td>${item.product_name}</td>
-                <td>${item.quantity}</td>
-                <td class="right">Rs. ${parseFloat(item.price).toFixed(2)}</td>
-              </tr>`).join('')
-            : '<tr><td colspan="3" style="text-align:center">No items</td></tr>'
-          }
-        </tbody>
-      </table>
-      <div class="divider"></div>
-      <table style="width:100%">
-        <tr><td>Subtotal:</td><td class="right">Rs. ${parseFloat(saleDetail?.sale?.total || 0).toFixed(2)}</td></tr>
-        <tr><td>Tax:</td><td class="right">Rs. ${parseFloat(saleDetail?.sale?.tax || 0).toFixed(2)}</td></tr>
-        ${parseFloat(saleDetail?.sale?.coupon_discount || 0) > 0 ? `<tr style="color:green"><td>Promo Code:</td><td class="right">-Rs. ${parseFloat(saleDetail?.sale?.coupon_discount || 0).toFixed(2)}</td></tr>` : ''}
-        ${parseFloat(saleDetail?.sale?.loyalty_points_redeemed || 0) > 0 ? `<tr style="color:#b45309"><td>&#9733; Loyalty Points:</td><td class="right">-Rs. ${parseFloat(saleDetail?.sale?.loyalty_points_redeemed || 0).toFixed(2)}</td></tr>` : ''}
-        <tr style="color:purple"><td>Donation:</td><td class="right">Rs. 1.00</td></tr>
-      </table>
-      <div class="divider"></div>
-      <p class="total right">Total: Rs. ${parseFloat(sale?.grand_total || 0).toFixed(2)}</p>
-      <div class="divider"></div>
-      <p class="center">Thank you for your purchase!</p>
-      <script>window.onload = () => { window.print(); window.onafterprint = () => window.close(); }<\/script>
-      </body></html>
-    `)
-    win.document.close()
+    const saleData = saleDetail?.sale || sale || {}
+    const subtotal  = parseFloat(saleData?.total || 0)
+    const tax       = parseFloat(saleData?.tax   || 0)
+    const discount  = parseFloat(saleData?.coupon_discount || 0)
+    const loyaltyDiscount = parseFloat(saleData?.loyalty_points_redeemed || 0)
+    const splitPayments = saleDetail?.payments?.length > 1
+      ? saleDetail.payments.map((p: any) => ({ method: p.method, amount: parseFloat(p.amount) }))
+      : undefined
+
+    const html = generateReceiptHTML({
+      storeName:      receiptStoreName,
+      logoUrl:        receiptLogoUrl || undefined,
+      footerMsg:      receiptFooterMsg,
+      items:          items.map((i: any) => ({ name: i.product_name, quantity: i.quantity, price: parseFloat(i.price) })),
+      invoiceNumber:  `INV-${String(sale?.id || 0).padStart(6, '0')}`,
+      orderTime:      sale?.sale_date ? new Date(sale.sale_date) : undefined,
+      customerName:   sale?.customer_name || undefined,
+      orderType:      'POS',
+      subtotal,
+      tax,
+      taxLabel:       'Tax',
+      showTax:        tax > 0,
+      discount,
+      loyaltyDiscount,
+      payMethod:      saleData?.payment_method || sale?.payment_method || 'cash',
+      splitPayments,
+    })
+    const w = window.open('', '_blank', 'width=360,height=650')
+    if (!w) return
+    w.document.write(html)
+    w.document.close()
+    w.focus()
+    setTimeout(() => { w.print() }, 300)
   }
 
   React.useEffect(() => {
     setUserRole(localStorage.getItem('userRole') || 'cashier')
+    // Fetch receipt settings for print functions
+    const base = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api').replace('/api', '')
+    Promise.all([api.get('/settings'), api.get('/settings/receipt')]).then(([sRes, rRes]) => {
+      const s = sRes.data.data || sRes.data
+      if (s?.store_name) setReceiptStoreName(s.store_name)
+      if (s?.receipt_logo) setReceiptLogoUrl(`${base}${s.receipt_logo}`)
+      if (s?.receipt_footer_message) setReceiptFooterMsg(s.receipt_footer_message)
+      if (rRes.data?.success && rRes.data?.data) {
+        const d = rRes.data.data
+        if (d.receipt_logo) setReceiptLogoUrl(`${base}${d.receipt_logo}`)
+        if (d.receipt_footer_message) setReceiptFooterMsg(d.receipt_footer_message)
+      }
+    }).catch(() => {})
   }, [])
 
   const fetchData = React.useCallback(async (silent = false) => {

@@ -45,7 +45,7 @@ export default function LoginPage() {
     return () => clearInterval(interval);
   }, [lockoutUntil]);
 
-  const isEmailValid = (email: string) => /^[^\s@]+@[^\s@]+\.(com|org)$/i.test(email)
+  const isEmailValid = (email: string) => /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -69,7 +69,7 @@ export default function LoginPage() {
       if (!isEmailValid(trimmedEmail)) {
         toast({
           title: "Invalid Email",
-          description: "Email must end with .com or .org (e.g. user@example.com)",
+          description: "Please enter a valid email address (e.g. user@example.com)",
           variant: "destructive"
         })
         setIsLoading(false)

@@ -139,7 +139,12 @@ router.post('/login', async (req, res) => {
       throw new Error('JWT_SECRET is missing from .env');
     }
 
-    const permissions = JSON.parse(user.permissions || '[]');
+    let permissions = [];
+    try {
+      permissions = JSON.parse(user.permissions || '[]');
+    } catch {
+      permissions = [];
+    }
 
     const token = jwt.sign(
       { id: user.id, role: user.role, permissions },
@@ -241,12 +246,18 @@ router.get('/profile', verifyToken, async (req, res) => {
     if (!rows || rows.length === 0) return res.status(404).json({ success: false, message: "User not found" });
     
     const user = rows[0];
-    res.json({ 
-      success: true, 
+    let perms = [];
+    try {
+      perms = JSON.parse(user.permissions || '[]');
+    } catch {
+      perms = [];
+    }
+    res.json({
+      success: true,
       data: {
         ...user,
-        permissions: JSON.parse(user.permissions || '[]')
-      } 
+        permissions: perms
+      }
     });
   } catch (err) {
     console.error('❌ Profile Error:', err);

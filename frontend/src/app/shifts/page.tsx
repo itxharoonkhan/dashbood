@@ -16,6 +16,8 @@ import {
   ShoppingBag,
   Trash2,
   ArrowDownCircle,
+  Search,
+  X,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -279,6 +281,12 @@ export default function ShiftsPage() {
   const [cashOutReason, setCashOutReason] = React.useState("")
   const [cashOutLoading, setCashOutLoading] = React.useState(false)
 
+  // filter state (shifts history)
+  const [filterCashier, setFilterCashier] = React.useState("")
+  const [filterFrom, setFilterFrom] = React.useState("")
+  const [filterTo, setFilterTo] = React.useState("")
+  const [filterStatus, setFilterStatus] = React.useState<"all" | "open" | "closed">("all")
+
   // form state
   const [openingCash, setOpeningCash] = React.useState("")
   const [closingCash, setClosingCash] = React.useState("")
@@ -495,6 +503,23 @@ export default function ShiftsPage() {
     return <Minus className="w-3 h-3 text-muted-foreground" />
   }
 
+  const filteredShifts = shifts.filter(s => {
+    const matchCashier = !filterCashier || s.cashier_name.toLowerCase().includes(filterCashier.toLowerCase())
+    const matchFrom = !filterFrom || new Date(s.start_time) >= new Date(filterFrom)
+    const matchTo = !filterTo || new Date(s.start_time) <= new Date(filterTo + "T23:59:59")
+    const matchStatus = filterStatus === "all" || s.status === filterStatus
+    return matchCashier && matchFrom && matchTo && matchStatus
+  })
+
+  const hasActiveFilters = filterCashier || filterFrom || filterTo || filterStatus !== "all"
+
+  const clearFilters = () => {
+    setFilterCashier("")
+    setFilterFrom("")
+    setFilterTo("")
+    setFilterStatus("all")
+  }
+
   if (loading) {
     return (
       <ProtectedRoute allowedRoles={["admin", "cashier"]}>
@@ -614,10 +639,86 @@ export default function ShiftsPage() {
         {/* ── Shifts History (Admin only) ───────────────────────────────────── */}
         {userRole === "admin" && (
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Shifts History</CardTitle>
-              <CardDescription>{shifts.length} total shifts</CardDescription>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <CardTitle className="text-base">Shifts History</CardTitle>
+                  <CardDescription>
+                    {hasActiveFilters
+                      ? `${filteredShifts.length} of ${shifts.length} shifts`
+                      : `${shifts.length} total shifts`}
+                  </CardDescription>
+                </div>
+                {hasActiveFilters && (
+                  <button
+                    onClick={clearFilters}
+                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" /> Clear filters
+                  </button>
+                )}
+              </div>
+
+              {/* Filter Bar */}
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 pt-2">
+                {/* Cashier Search */}
+                <div className="relative sm:col-span-1">
+                  <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+                  <input
+                    type="text"
+                    placeholder="Cashier name..."
+                    value={filterCashier}
+                    onChange={e => setFilterCashier(e.target.value)}
+                    className="w-full pl-8 pr-3 py-2 text-sm border border-border rounded-md bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+
+                {/* Date From */}
+                <div>
+                  <input
+                    type="date"
+                    value={filterFrom}
+                    onChange={e => setFilterFrom(e.target.value)}
+                    max={filterTo || undefined}
+                    className="w-full px-3 py-2 text-sm border border-border rounded-md bg-background focus:outline-none focus:ring-1 focus:ring-primary text-muted-foreground"
+                  />
+                </div>
+
+                {/* Date To */}
+                <div>
+                  <input
+                    type="date"
+                    value={filterTo}
+                    onChange={e => setFilterTo(e.target.value)}
+                    min={filterFrom || undefined}
+                    max="9999-12-31"
+                    className="w-full px-3 py-2 text-sm border border-border rounded-md bg-background focus:outline-none focus:ring-1 focus:ring-primary text-muted-foreground"
+                  />
+                </div>
+
+                {/* Status Filter */}
+                <div className="flex gap-1">
+                  {(["all", "open", "closed"] as const).map(s => (
+                    <button
+                      key={s}
+                      onClick={() => setFilterStatus(s)}
+                      className={`flex-1 py-2 text-xs font-medium rounded-md border transition-colors capitalize ${
+                        filterStatus === s
+                          ? s === "open"
+                            ? "bg-green-500 text-white border-green-500"
+                            : s === "closed"
+                              ? "bg-muted text-foreground border-border"
+                              : "bg-primary text-primary-foreground border-primary"
+                          : "bg-background text-muted-foreground border-border hover:bg-muted/50"
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </CardHeader>
+
             <CardContent className="p-0">
               <ScrollArea className="h-[400px]">
                 <Table>
@@ -636,14 +737,14 @@ export default function ShiftsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {shifts.length === 0 ? (
+                    {filteredShifts.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
-                          No shifts recorded yet.
+                          {hasActiveFilters ? "Koi shift match nahi hua filter se." : "No shifts recorded yet."}
                         </TableCell>
                       </TableRow>
                     ) : (
-                      shifts.map((s) => (
+                      filteredShifts.map((s) => (
                         <TableRow key={s.id}>
                           <TableCell className="text-muted-foreground text-xs">{s.id}</TableCell>
                           <TableCell className="font-medium">{s.cashier_name}</TableCell>

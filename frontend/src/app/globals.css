@@ -242,6 +242,16 @@ textarea:hover {
     min-width: 36px;
   }
 
+  /* On-screen shortcut buttons — only visible on touch/coarse-pointer devices */
+  .touch-shortcut-bar {
+    display: none;
+  }
+  @media (pointer: coarse) {
+    .touch-shortcut-bar {
+      display: flex;
+    }
+  }
+
   /* Scrollbar styling */
   .scrollbar-hide {
     -ms-overflow-style: none;
@@ -309,6 +319,26 @@ textarea:hover {
     .mobile-full-width {
       width: 100% !important;
     }
+  }
+}
+
+/* ===== Touch Screen Optimizations ===== */
+/* On coarse-pointer (touch) devices: always show hover-only elements */
+@media (pointer: coarse) {
+  /* Table card delete button — always visible on touch */
+  .touch-always-visible {
+    opacity: 1 !important;
+  }
+
+  /* Larger input height for on-screen keyboard comfort */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) {
+    min-height: 44px;
+  }
+
+  /* Active tap feedback */
+  button:active, [role="button"]:active {
+    opacity: 0.75;
+    transform: scale(0.96);
   }
 }
 

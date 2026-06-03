@@ -10,8 +10,12 @@ import {
   CreditCard,
   Loader2,
   ChefHat,
-  SplitSquareHorizontal,
   CheckCircle2,
+  RotateCcw,
+  Banknote,
+  QrCode,
+  Split,
+  X,
 } from "lucide-react"
 import {
   Dialog,
@@ -35,7 +39,7 @@ import {
 } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import api from "@/lib/api"
-import BillSplit from "./BillSplit"
+import { printReceipt } from "@/lib/print-receipt"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -71,45 +75,75 @@ interface Props {
 
 // ─── Print KOT Slip ───────────────────────────────────────────────────────────
 
-function printKOT(tableName: string, kotNumber: string, items: OrderItem[]) {
-  const now = new Date().toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit', hour12: true })
-  const rows = items.map(i => `
-    <tr>
-      <td style="font-size:18px; font-weight:bold; padding:4px 0;">${i.quantity}x</td>
-      <td style="font-size:16px; padding:4px 8px;">
-        ${i.product_name}
-        ${i.notes ? `<div style="font-size:12px; color:#555; font-style:italic;">* ${i.notes}</div>` : ''}
+function printKOT(
+  tableName: string,
+  kotNumber: string,
+  items: OrderItem[],
+  waiterName = '',
+  pax = 0
+) {
+  const now      = new Date().toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit', hour12: true })
+  const dateStr  = new Date().toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: 'numeric' })
+  const totalQty = items.reduce((s, i) => s + i.quantity, 0)
+
+  const rows = items.map((i, idx) => `
+    <tr style="${idx > 0 ? 'border-top:1px dotted #ccc;' : ''}">
+      <td class="num">${idx + 1}.</td>
+      <td class="name">
+        <span class="item-title">${i.product_name}</span>
+        ${i.notes ? `<div class="note">&#9656; ${i.notes}</div>` : ''}
       </td>
+      <td class="qty">x${i.quantity}</td>
     </tr>`).join('')
 
   const html = `<!DOCTYPE html>
-  <html>
-  <head>
-    <title>KOT - ${tableName}</title>
-    <style>
-      * { margin:0; padding:0; box-sizing:border-box; }
-      body { font-family: monospace; width: 280px; padding: 12px; }
-      .header { text-align:center; border-bottom: 2px dashed #000; padding-bottom:8px; margin-bottom:8px; }
-      .title { font-size:20px; font-weight:bold; letter-spacing:2px; }
-      .table-name { font-size:28px; font-weight:bold; margin:6px 0; }
-      .meta { font-size:12px; color:#444; }
-      table { width:100%; border-collapse:collapse; margin-top:8px; }
-      .footer { border-top:2px dashed #000; margin-top:10px; padding-top:8px; text-align:center; font-size:11px; color:#666; }
-      @media print { button { display:none; } }
-    </style>
-  </head>
-  <body>
-    <div class="header">
-      <div class="title">** KITCHEN ORDER **</div>
-      <div class="table-name">${tableName}</div>
-      <div class="meta">KOT: ${kotNumber} &nbsp;|&nbsp; Time: ${now}</div>
-    </div>
-    <table>${rows}</table>
-    <div class="footer">--- Order End ---</div>
-  </body>
-  </html>`
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>KOT - ${tableName}</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'Courier New',Courier,monospace; width:80mm; padding:8px; font-size:13px; }
+    .title-box { border:2.5px solid #000; text-align:center; padding:5px 0; font-size:15px; font-weight:bold; letter-spacing:4px; margin-bottom:6px; }
+    .table-name { text-align:center; font-size:52px; font-weight:bold; letter-spacing:6px; line-height:1; margin:4px 0 6px; }
+    .dashed { border-top:1px dashed #000; margin:5px 0; }
+    .solid  { border-top:2.5px solid #000; margin:5px 0; }
+    .info   { display:flex; justify-content:space-between; font-size:11px; margin:2px 0; }
+    .lbl    { color:#555; }
+    .val    { font-weight:bold; }
+    table   { width:100%; border-collapse:collapse; margin:6px 0; }
+    .num    { width:20px; font-size:10px; color:#888; vertical-align:top; padding-top:5px; }
+    .name   { vertical-align:top; padding:4px 6px; }
+    .item-title { font-size:15px; font-weight:bold; display:block; }
+    .note   { font-size:11px; color:#555; font-style:italic; margin-top:2px; }
+    .qty    { text-align:right; font-size:26px; font-weight:bold; white-space:nowrap; width:48px; vertical-align:middle; }
+    .summary{ text-align:center; font-size:12px; font-weight:bold; margin:4px 0; }
+    .footer { text-align:center; font-size:10px; color:#666; margin-top:6px; }
+    @media print { @page { margin:0; } body { padding:5px; } }
+  </style>
+</head>
+<body>
+  <div class="title-box">KITCHEN ORDER</div>
+  <div class="table-name">${tableName}</div>
 
-  const w = window.open('', '_blank', 'width=320,height=500')
+  <div class="dashed"></div>
+  <div class="info"><span class="lbl">KOT #</span><span class="val">${kotNumber}</span></div>
+  <div class="info"><span class="lbl">Date</span><span class="val">${dateStr}</span></div>
+  <div class="info"><span class="lbl">Time</span><span class="val">${now}</span></div>
+  ${waiterName ? `<div class="info"><span class="lbl">Waiter</span><span class="val">${waiterName}</span></div>` : ''}
+  ${pax > 0    ? `<div class="info"><span class="lbl">Covers</span><span class="val">${pax} pax</span></div>` : ''}
+  <div class="solid"></div>
+
+  <table>${rows}</table>
+
+  <div class="solid"></div>
+  <div class="summary">${items.length} item(s) &nbsp;|&nbsp; Total qty: ${totalQty}</div>
+  <div class="dashed"></div>
+  <div class="footer">--- Kitchen Copy ---</div>
+</body>
+</html>`
+
+  const w = window.open('', '_blank', 'width=340,height=600')
   if (!w) return
   w.document.write(html)
   w.document.close()
@@ -117,106 +151,88 @@ function printKOT(tableName: string, kotNumber: string, items: OrderItem[]) {
   setTimeout(() => { w.print() }, 300)
 }
 
-// ─── Print Bill ───────────────────────────────────────────────────────────────
+// ─── Print Correction KOT ────────────────────────────────────────────────────
 
-function printBill(
+function printCorrectionKOT(
   tableName: string,
-  items: OrderItem[],
-  pax: number,
-  orderId: number,
-  storeName: string,
-  footerMsg: string,
-  waiterName: string,
-  payMethod = '',
-  amountPaid = 0,
-  saleId: number | null = null,
-  logoUrl = ''
+  kotNumber: string,
+  voided: { name: string; qty: number }[],
+  added: OrderItem[],
+  waiterName = ''
 ) {
-  const total   = items.reduce((s, i) => s + i.quantity * i.unit_price, 0)
-  const change  = amountPaid > total ? amountPaid - total : 0
-  const now     = new Date()
-  const dateStr = now.toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: 'numeric' })
-  const timeStr = now.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit', hour12: true })
+  const now     = new Date().toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit', hour12: true })
+  const dateStr = new Date().toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: 'numeric' })
 
-  const rows = items.map(i => `
-    <tr>
-      <td class="item-name">${i.product_name}${i.notes ? `<br/><span class="note">* ${i.notes}</span>` : ''}</td>
-      <td class="center">x${i.quantity}</td>
-      <td class="right">Rs. ${(i.quantity * i.unit_price).toLocaleString()}</td>
+  const voidRows = voided.map((v, idx) => `
+    <tr style="${idx > 0 ? 'border-top:1px dotted #fca5a5;' : ''}">
+      <td class="num" style="color:#dc2626;">-</td>
+      <td class="name"><span class="item-title" style="color:#dc2626;text-decoration:line-through;">${v.name}</span></td>
+      <td class="qty" style="color:#dc2626;">x${v.qty}</td>
+    </tr>`).join('')
+
+  const addRows = added.map((i, idx) => `
+    <tr style="${idx > 0 ? 'border-top:1px dotted #86efac;' : ''}">
+      <td class="num" style="color:#16a34a;">+</td>
+      <td class="name">
+        <span class="item-title" style="color:#16a34a;">${i.product_name}</span>
+        ${i.notes ? `<div class="note" style="color:#16a34a;">&#9656; ${i.notes}</div>` : ''}
+      </td>
+      <td class="qty" style="color:#16a34a;">x${i.quantity}</td>
     </tr>`).join('')
 
   const html = `<!DOCTYPE html>
 <html>
 <head>
-  <title>Receipt - ${tableName}</title>
+  <meta charset="utf-8"/>
+  <title>Correction KOT - ${tableName}</title>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
-    body { font-family:'Courier New',monospace; width:300px; padding:10px; font-size:12px; }
-    .header { text-align:center; margin-bottom:10px; }
-    .logo   { max-height:60px; max-width:180px; object-fit:contain; margin:0 auto 6px; display:block; }
-    .store  { font-size:20px; font-weight:bold; margin-bottom:2px; }
-    .sub    { font-size:10px; color:#666; }
-    .dashed { border-top:1px dashed #000; margin:6px 0; }
-    .solid  { border-top:2px solid #000; margin:6px 0; }
-    .row    { display:flex; justify-content:space-between; font-size:11px; margin:2px 0; }
-    .bold   { font-weight:bold; }
-    .right  { text-align:right; }
-    .center { text-align:center; }
-    table   { width:100%; border-collapse:collapse; margin:4px 0; }
-    th      { font-size:11px; font-weight:bold; padding:3px 0; border-bottom:1px solid #000; }
-    td      { font-size:11px; padding:3px 0; vertical-align:top; }
-    td.item-name { width:55%; }
-    td.center    { width:15%; text-align:center; }
-    td.right     { width:30%; text-align:right; }
-    .note   { font-size:10px; font-style:italic; color:#666; }
-    .total-row { display:flex; justify-content:space-between; font-weight:bold; font-size:14px; margin:4px 0; }
-    .pay-row   { display:flex; justify-content:space-between; font-size:11px; margin:2px 0; }
-    .footer { text-align:center; font-size:10px; margin-top:8px; color:#555; }
-    @media print { @page { margin:0; } body { padding:4px; } }
+    body { font-family:'Courier New',Courier,monospace; width:80mm; padding:8px; font-size:13px; }
+    .title-box { border:2.5px solid #dc2626; text-align:center; padding:5px 0; font-size:14px; font-weight:bold; letter-spacing:3px; color:#dc2626; margin-bottom:6px; }
+    .table-name { text-align:center; font-size:52px; font-weight:bold; letter-spacing:6px; line-height:1; margin:4px 0 6px; }
+    .dashed { border-top:1px dashed #000; margin:5px 0; }
+    .solid  { border-top:2.5px solid #000; margin:5px 0; }
+    .info   { display:flex; justify-content:space-between; font-size:11px; margin:2px 0; }
+    .lbl    { color:#555; }
+    .val    { font-weight:bold; }
+    .sec-title { font-size:12px; font-weight:bold; padding:4px 6px; margin:6px 0 2px; border-radius:3px; }
+    table   { width:100%; border-collapse:collapse; margin:2px 0; }
+    .num    { width:16px; font-size:16px; font-weight:bold; vertical-align:top; padding-top:4px; }
+    .name   { vertical-align:top; padding:4px 6px; }
+    .item-title { font-size:15px; font-weight:bold; display:block; }
+    .note   { font-size:11px; font-style:italic; margin-top:2px; }
+    .qty    { text-align:right; font-size:26px; font-weight:bold; white-space:nowrap; width:48px; vertical-align:middle; }
+    .footer { text-align:center; font-size:10px; color:#666; margin-top:8px; }
+    @media print { @page { margin:0; } body { padding:5px; } }
   </style>
 </head>
 <body>
-  <div class="header">
-    ${logoUrl ? `<img src="${logoUrl}" class="logo" alt="logo"/>` : ''}
-    <div class="store">${storeName}</div>
-    <div class="sub">${dateStr} &nbsp; ${timeStr}</div>
-  </div>
+  <div class="title-box">ORDER CORRECTION</div>
+  <div class="table-name">${tableName}</div>
 
   <div class="dashed"></div>
-  <div class="row"><span>Invoice #:</span><span class="bold">${saleId ?? orderId}</span></div>
-  <div class="row"><span>Table:</span><span class="bold">${tableName}</span></div>
-  <div class="row"><span>Guests:</span><span>${pax}</span></div>
-  <div class="row"><span>Waiter:</span><span>${waiterName}</span></div>
-  <div class="row"><span>Type:</span><span>DINE</span></div>
-  <div class="dashed"></div>
-
-  <table>
-    <thead>
-      <tr>
-        <th style="text-align:left">Item</th>
-        <th style="text-align:center">Qty</th>
-        <th style="text-align:right">Amount</th>
-      </tr>
-    </thead>
-    <tbody>${rows}</tbody>
-  </table>
-
+  <div class="info"><span class="lbl">KOT #</span><span class="val">${kotNumber}</span></div>
+  <div class="info"><span class="lbl">Date</span><span class="val">${dateStr}</span></div>
+  <div class="info"><span class="lbl">Time</span><span class="val">${now}</span></div>
+  ${waiterName ? `<div class="info"><span class="lbl">Waiter</span><span class="val">${waiterName}</span></div>` : ''}
   <div class="solid"></div>
-  <div class="total-row"><span>Total</span><span>Rs. ${total.toLocaleString()}</span></div>
-  <div class="dashed"></div>
 
-  ${amountPaid > 0 ? `
-  <div class="pay-row"><span>Cash Received:</span><span>Rs. ${amountPaid.toLocaleString()}</span></div>
-  ${change > 0 ? `<div class="pay-row"><span>Change:</span><span>Rs. ${change.toLocaleString()}</span></div>` : ''}
-  <div class="pay-row"><span>Payment Mode:</span><span style="text-transform:capitalize">${payMethod}</span></div>
-  <div class="dashed"></div>
+  ${voided.length > 0 ? `
+    <div class="sec-title" style="background:#fee2e2;color:#dc2626;">VOID — Hatao</div>
+    <table>${voidRows}</table>
   ` : ''}
 
-  <div class="footer">${footerMsg || 'Thank you for dining with us!'}</div>
+  ${added.length > 0 ? `
+    <div class="sec-title" style="background:#dcfce7;color:#16a34a;${voided.length > 0 ? 'margin-top:8px;' : ''}">ADD — Banana hai</div>
+    <table>${addRows}</table>
+  ` : ''}
+
+  <div class="dashed"></div>
+  <div class="footer">--- Correction End ---</div>
 </body>
 </html>`
 
-  const w = window.open('', '_blank', 'width=360,height=650')
+  const w = window.open('', '_blank', 'width=340,height=600')
   if (!w) return
   w.document.write(html)
   w.document.close()
@@ -241,12 +257,21 @@ export default function OrderPanel({ open, table, onClose }: Props) {
   const [pax, setPax] = React.useState(1)
   const [loading, setLoading] = React.useState(true)
   const [submitting, setSubmitting] = React.useState(false)
-  const [splitOpen, setSplitOpen] = React.useState(false)
+  const [taxRate, setTaxRate] = React.useState(0)
+  const [showTax, setShowTax] = React.useState(false)
+  const [showDonation, setShowDonation] = React.useState(false)
+  // itemId → new desired qty (for sent items only; 0 = full void)
+  const [itemAdjustments, setItemAdjustments] = React.useState<Record<number, number>>({})
 
   // Payment dialog state
   const [payDialogOpen, setPayDialogOpen] = React.useState(false)
-  const [payMethod, setPayMethod] = React.useState("cash")
-  const [payAmount, setPayAmount] = React.useState("")
+  const [payMethod, setPayMethod]   = React.useState("cash")
+  const [payAmount, setPayAmount]   = React.useState("")
+  const [isSplitMode, setIsSplitMode] = React.useState(false)
+  const [splitRows, setSplitRows]   = React.useState([
+    { method: "cash", amount: "" },
+    { method: "card", amount: "" },
+  ])
 
   // ─── Load data when dialog opens ─────────────────────────────────────────
   React.useEffect(() => {
@@ -257,18 +282,25 @@ export default function OrderPanel({ open, table, onClose }: Props) {
     setOrderId(null)
     setOrderStatus("open")
     setWaiterName("")
+    setItemAdjustments({})
 
 
     const init = async () => {
       try {
         // Load settings for receipt
-        api.get("/settings").then(r => {
-          const s = r.data.data || r.data
+        Promise.all([api.get("/settings"), api.get("/settings/receipt")]).then(([sRes, rRes]) => {
+          const base = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api').replace('/api', '')
+          const s = sRes.data.data || sRes.data
           if (s?.store_name) setStoreName(s.store_name)
+          if (s?.tax_rate) setTaxRate(parseFloat(s.tax_rate) || 0)
+          if (s?.receipt_logo) setLogoUrl(`${base}${s.receipt_logo}`)
           if (s?.receipt_footer_message) setFooterMsg(s.receipt_footer_message)
-          if (s?.receipt_logo) {
-            const base = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api').replace('/api', '')
-            setLogoUrl(`${base}${s.receipt_logo}`)
+          if (rRes.data?.success && rRes.data?.data) {
+            const d = rRes.data.data
+            if (d.receipt_logo) setLogoUrl(`${base}${d.receipt_logo}`)
+            if (d.receipt_footer_message) setFooterMsg(d.receipt_footer_message)
+            setShowTax(Boolean(d.receipt_show_tax))
+            setShowDonation(Boolean(d.receipt_show_donation))
           }
         }).catch(() => {})
 
@@ -361,7 +393,15 @@ export default function OrderPanel({ open, table, onClose }: Props) {
     setCart(prev => prev.filter(i => !(i.product_id === product_id && !i.id)))
   }
 
-  const total = cart.reduce((sum, i) => sum + i.quantity * i.unit_price, 0)
+  const getDisplayQty = (item: OrderItem) =>
+    item.id ? (itemAdjustments[item.id] ?? item.quantity) : item.quantity
+
+  const subtotal    = cart.reduce((sum, i) => sum + getDisplayQty(i) * i.unit_price, 0)
+  const taxAmount   = showTax ? parseFloat((subtotal * taxRate / 100).toFixed(2)) : 0
+  const donationAmt = showDonation ? 1 : 0
+  const total       = parseFloat((subtotal + taxAmount + donationAmt).toFixed(2))
+
+  const hasAdjustments = Object.keys(itemAdjustments).length > 0
 
   // ─── Load an existing order by ID ────────────────────────────────────────
   const loadOrder = async (oid: number) => {
@@ -400,7 +440,7 @@ export default function OrderPanel({ open, table, onClose }: Props) {
       })
 
       await loadOrder(newOrderId)
-      printKOT(table.name, kotRes.data.data?.kot_number || 'KOT', newItems)
+      printKOT(table.name, kotRes.data.data?.kot_number || 'KOT', newItems, waiterName, pax)
       toast({ title: "KOT Printed", description: `Slip print ho gayi — waiter kitchen le jaaye` })
     } catch (err: any) {
       // Agar backend ne 400 diya with existing_order_id — load that order
@@ -430,10 +470,50 @@ export default function OrderPanel({ open, table, onClose }: Props) {
         items: newItems.map(i => ({ product_id: i.product_id, quantity: i.quantity, notes: i.notes })),
       })
       await loadOrder(orderId)
-      printKOT(table.name, kotRes.data.data?.kot_number || 'KOT', newItems)
+      printKOT(table.name, kotRes.data.data?.kot_number || 'KOT', newItems, waiterName, pax)
       toast({ title: "KOT Printed", description: "Slip print ho gayi — waiter kitchen le jaaye" })
     } catch {
       toast({ title: "Error", description: "Failed to send KOT", variant: "destructive" })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // ─── Send Correction KOT (modify sent items + add new items) ────────────
+  const handleSendCorrection = async () => {
+    if (!orderId) return
+    setSubmitting(true)
+    try {
+      // 1. Apply adjustments to sent items
+      const voided: { name: string; qty: number }[] = []
+      for (const [itemIdStr, newQty] of Object.entries(itemAdjustments)) {
+        const itemId = parseInt(itemIdStr)
+        const original = cart.find(i => i.id === itemId)
+        if (!original) continue
+        const reduced = original.quantity - newQty
+        if (reduced > 0) voided.push({ name: original.product_name, qty: reduced })
+        await api.patch(`/orders/${orderId}/items/${itemId}`, { quantity: newQty })
+      }
+
+      // 2. Send new unsent items as KOT (if any)
+      const newItems = cart.filter(i => !i.id)
+      let kotNumber = 'CORR'
+      if (newItems.length > 0) {
+        const kotRes = await api.post(`/orders/${orderId}/items`, {
+          items: newItems.map(i => ({ product_id: i.product_id, quantity: i.quantity, notes: i.notes })),
+        })
+        kotNumber = kotRes.data.data?.kot_number || 'CORR'
+      }
+
+      // 3. Print correction KOT
+      printCorrectionKOT(table.name, kotNumber, voided, newItems, waiterName)
+
+      // 4. Reload order + clear adjustments
+      await loadOrder(orderId)
+      setItemAdjustments({})
+      toast({ title: "Correction Sent", description: "Kitchen ko correction slip mil gayi" })
+    } catch {
+      toast({ title: "Error", description: "Correction send nahi hua", variant: "destructive" })
     } finally {
       setSubmitting(false)
     }
@@ -472,17 +552,53 @@ export default function OrderPanel({ open, table, onClose }: Props) {
   // ─── Complete payment (with dialog) ───────────────────────────────────────
   const handleCompleteConfirm = async () => {
     if (!orderId) return
-    const paid = parseFloat(payAmount)
-    if (isNaN(paid) || paid < total) {
-      toast({ title: "Amount Kam Hai", description: `Minimum Rs. ${total.toLocaleString()} chahiye.`, variant: "destructive" })
-      return
+
+    if (isSplitMode) {
+      const splitPaid = splitRows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
+      if (splitPaid < total) {
+        toast({ title: "Amount Kam Hai", description: `Rs. ${(total - splitPaid).toFixed(2)} aur chahiye.`, variant: "destructive" })
+        return
+      }
+    } else {
+      const paid = parseFloat(payAmount)
+      if (isNaN(paid) || paid < total) {
+        toast({ title: "Amount Kam Hai", description: `Minimum Rs. ${total.toLocaleString()} chahiye.`, variant: "destructive" })
+        return
+      }
     }
+
     setSubmitting(true)
     setPayDialogOpen(false)
     try {
-      const completeRes = await api.put(`/orders/${orderId}/complete`, { payment_method: payMethod })
+      const splitPayload = isSplitMode
+        ? splitRows.map(r => ({ method: r.method, amount: parseFloat(r.amount) || 0 }))
+        : undefined
+
+      const completeRes = await api.put(`/orders/${orderId}/complete`, {
+        payment_method: isSplitMode ? 'split' : payMethod,
+        ...(splitPayload && { payments: splitPayload }),
+      })
       const saleId = completeRes.data?.data?.sale_id ?? null
-      printBill(table.name, cart, pax, orderId, storeName, footerMsg, waiterName || '—', payMethod, parseFloat(payAmount), saleId, logoUrl)
+      printReceipt({
+        storeName,
+        logoUrl,
+        footerMsg,
+        items: cart.map(i => ({ name: i.product_name, quantity: i.quantity, price: i.unit_price, notes: i.notes })),
+        invoiceNumber: saleId ?? orderId,
+        tableName: table.name,
+        pax,
+        waiterName: waiterName || '',
+        orderType: 'DINE',
+        subtotal,
+        tax: taxAmount,
+        taxLabel: taxRate > 0 ? `Tax (${taxRate}%)` : 'Tax',
+        showTax,
+        donation: donationAmt,
+        showDonation,
+        payMethod: isSplitMode ? 'split' : payMethod,
+        amountPaid: isSplitMode ? splitRows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0) : parseFloat(payAmount),
+        splitPayments: isSplitMode ? splitRows.map(r => ({ method: r.method, amount: parseFloat(r.amount) || 0 })) : undefined,
+      })
       toast({ title: "Payment Complete", description: `${table.name} available ho gayi.` })
       onClose()
     } catch {
@@ -510,14 +626,14 @@ export default function OrderPanel({ open, table, onClose }: Props) {
                 <ChefHat className="w-5 h-5 text-primary" />
                 {table.name}
               </DialogTitle>
-              <div className="flex items-center gap-1.5 border rounded-lg px-2.5 py-1">
+              <div className="flex items-center gap-1 border rounded-lg px-2 py-1">
                 <span className="text-xs text-muted-foreground font-medium">Guests</span>
-                <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => setPax(p => Math.max(1, p - 1))} disabled={!!orderId}>
-                  <Minus className="w-3 h-3" />
+                <Button variant="ghost" size="icon" className="h-8 w-8 touch-target-sm" onClick={() => setPax(p => Math.max(1, p - 1))} disabled={!!orderId}>
+                  <Minus className="w-3.5 h-3.5" />
                 </Button>
-                <span className="w-5 text-center font-bold text-sm">{pax}</span>
-                <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => setPax(p => p + 1)} disabled={!!orderId}>
-                  <Plus className="w-3 h-3" />
+                <span className="w-6 text-center font-bold text-sm">{pax}</span>
+                <Button variant="ghost" size="icon" className="h-8 w-8 touch-target-sm" onClick={() => setPax(p => p + 1)} disabled={!!orderId}>
+                  <Plus className="w-3.5 h-3.5" />
                 </Button>
               </div>
               <div className="flex items-center gap-1.5 ml-1">
@@ -566,7 +682,7 @@ export default function OrderPanel({ open, table, onClose }: Props) {
                     {filtered.map(p => (
                       <button
                         key={p.id}
-                        className={`text-left p-3 rounded-lg border transition-all ${
+                        className={`text-left p-3 rounded-lg border transition-all min-h-[72px] active:scale-95 ${
                           isReadOnly
                             ? "opacity-40 cursor-not-allowed"
                             : "hover:border-primary hover:bg-primary/5 cursor-pointer"
@@ -596,37 +712,76 @@ export default function OrderPanel({ open, table, onClose }: Props) {
                     {cart.length === 0 && (
                       <p className="text-xs text-muted-foreground text-center py-8">No items yet</p>
                     )}
-                    {cart.map((item, idx) => (
-                      <div key={idx} className="flex items-start gap-2 text-sm">
-                        <div className="flex-1 min-w-0">
-                          <div className="font-medium leading-tight truncate">{item.product_name}</div>
-                          <div className="text-xs text-muted-foreground">
-                            Rs. {item.unit_price.toLocaleString()} × {item.quantity} = Rs. {(item.unit_price * item.quantity).toLocaleString()}
+                    {cart.map((item, idx) => {
+                      const displayQty = getDisplayQty(item)
+                      const isVoided   = item.id && displayQty === 0
+                      const isReduced  = item.id && displayQty < item.quantity && displayQty > 0
+                      return (
+                        <div key={idx} className={`flex items-start gap-2 text-sm rounded-md p-1 -mx-1 ${isVoided ? 'bg-red-50 opacity-60' : isReduced ? 'bg-orange-50' : ''}`}>
+                          <div className="flex-1 min-w-0">
+                            <div className={`font-medium leading-tight truncate ${isVoided ? 'line-through text-destructive' : ''}`}>
+                              {item.product_name}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              Rs. {item.unit_price.toLocaleString()} × {displayQty} = Rs. {(item.unit_price * displayQty).toLocaleString()}
+                            </div>
+                            {item.id && !isVoided && !isReduced && (
+                              <Badge variant="outline" className="text-[9px] mt-0.5">Sent to kitchen</Badge>
+                            )}
+                            {isReduced && (
+                              <Badge variant="outline" className="text-[9px] mt-0.5 border-orange-400 text-orange-600">
+                                {item.quantity} → {displayQty} (correction)
+                              </Badge>
+                            )}
+                            {isVoided && (
+                              <Badge variant="outline" className="text-[9px] mt-0.5 border-red-400 text-red-600">VOID</Badge>
+                            )}
                           </div>
-                          {item.id && (
-                            <Badge variant="outline" className="text-[9px] mt-0.5">Sent to kitchen</Badge>
-                          )}
+                          <div className="flex items-center gap-1 shrink-0">
+                            {!item.id ? (
+                              <>
+                                <Button variant="ghost" size="icon" className="h-9 w-9 touch-target-sm" onClick={() => updateQty(item.product_id, -1)}>
+                                  <Minus className="w-3.5 h-3.5" />
+                                </Button>
+                                <span className="w-6 text-center text-xs font-semibold">{item.quantity}</span>
+                                <Button variant="ghost" size="icon" className="h-9 w-9 touch-target-sm" onClick={() => updateQty(item.product_id, 1)}>
+                                  <Plus className="w-3.5 h-3.5" />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-9 w-9 touch-target-sm text-destructive" onClick={() => removeItem(item.product_id)}>
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </>
+                            ) : (
+                              <div className="flex items-center gap-1">
+                                {/* Undo reduction */}
+                                {displayQty < item.quantity && (
+                                  <Button variant="ghost" size="icon" className="h-9 w-9 touch-target-sm text-green-600"
+                                    onClick={() => setItemAdjustments(prev => {
+                                      const n = Math.min(item.quantity, (prev[item.id!] ?? item.quantity) + 1)
+                                      return { ...prev, [item.id!]: n }
+                                    })}>
+                                    <Plus className="w-3.5 h-3.5" />
+                                  </Button>
+                                )}
+                                <span className={`w-6 text-center text-xs font-bold ${isVoided ? 'text-destructive' : isReduced ? 'text-orange-600' : ''}`}>
+                                  {displayQty}
+                                </span>
+                                {/* Reduce qty */}
+                                {!isReadOnly && (
+                                  <Button variant="ghost" size="icon" className="h-9 w-9 touch-target-sm text-destructive"
+                                    onClick={() => setItemAdjustments(prev => {
+                                      const n = Math.max(0, (prev[item.id!] ?? item.quantity) - 1)
+                                      return { ...prev, [item.id!]: n }
+                                    })}>
+                                    <Minus className="w-3.5 h-3.5" />
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          {!item.id ? (
-                            <>
-                              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => updateQty(item.product_id, -1)}>
-                                <Minus className="w-3 h-3" />
-                              </Button>
-                              <span className="w-5 text-center text-xs font-semibold">{item.quantity}</span>
-                              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => updateQty(item.product_id, 1)}>
-                                <Plus className="w-3 h-3" />
-                              </Button>
-                              <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => removeItem(item.product_id)}>
-                                <Trash2 className="w-3 h-3" />
-                              </Button>
-                            </>
-                          ) : (
-                            <span className="text-xs font-bold w-6 text-center">{item.quantity}</span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 </ScrollArea>
 
@@ -663,7 +818,13 @@ export default function OrderPanel({ open, table, onClose }: Props) {
                     {/* Order open */}
                     {orderId && orderStatus === "open" && (
                       <>
-                        {newItemsInCart.length > 0 && (
+                        {/* Correction: sent items modified OR new items added together */}
+                        {(hasAdjustments || newItemsInCart.length > 0) && hasAdjustments ? (
+                          <Button className="w-full h-9 bg-orange-500 hover:bg-orange-600 text-white" onClick={handleSendCorrection} disabled={submitting}>
+                            {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <RotateCcw className="w-4 h-4 mr-1" />}
+                            Send Correction KOT
+                          </Button>
+                        ) : newItemsInCart.length > 0 && (
                           <Button className="w-full h-9" variant="outline" onClick={handleSendKot} disabled={submitting}>
                             {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <ChefHat className="w-4 h-4 mr-1" />}
                             Send KOT + Print Slip ({newItemsInCart.length} items)
@@ -672,10 +833,6 @@ export default function OrderPanel({ open, table, onClose }: Props) {
                         <Button className="w-full h-9" onClick={handlePrintBill} disabled={submitting || cart.length === 0}>
                           {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Printer className="w-4 h-4 mr-1" />}
                           Print Bill
-                        </Button>
-                        <Button className="w-full h-9" variant="outline" onClick={() => setSplitOpen(true)} disabled={submitting}>
-                          <SplitSquareHorizontal className="w-4 h-4 mr-1" />
-                          Split Bill
                         </Button>
                       </>
                     )}
@@ -687,16 +844,14 @@ export default function OrderPanel({ open, table, onClose }: Props) {
                           className="w-full h-9"
                           onClick={() => {
                             setPayAmount(String(total))
+                            setIsSplitMode(false)
+                            setSplitRows([{ method: "cash", amount: "" }, { method: "card", amount: "" }])
                             setPayDialogOpen(true)
                           }}
                           disabled={submitting}
                         >
                           {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <CreditCard className="w-4 h-4 mr-1" />}
                           Complete Payment
-                        </Button>
-                        <Button className="w-full h-9" variant="outline" onClick={() => setSplitOpen(true)} disabled={submitting}>
-                          <SplitSquareHorizontal className="w-4 h-4 mr-1" />
-                          Split Bill
                         </Button>
                         <Button
                           className="w-full h-9 text-xs border-dashed" variant="outline"
@@ -725,49 +880,156 @@ export default function OrderPanel({ open, table, onClose }: Props) {
               Payment — {table.name}
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="bg-muted/50 rounded-lg p-3 text-center">
-              <p className="text-xs text-muted-foreground">Bill Amount</p>
-              <p className="text-2xl font-bold">Rs. {total.toLocaleString()}</p>
-            </div>
-            <div className="space-y-2">
-              <Label>Payment Method</Label>
-              <Select value={payMethod} onValueChange={setPayMethod}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="cash">Cash</SelectItem>
-                  <SelectItem value="card">Card</SelectItem>
-                  <SelectItem value="wallet">Wallet / EasyPaisa</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Amount Received</Label>
-              <Input
-                type="number"
-                value={payAmount}
-                onChange={e => setPayAmount(e.target.value)}
-                placeholder={`Min Rs. ${total.toLocaleString()}`}
-              />
-              {payMethod === "cash" && parseFloat(payAmount) > total && (
-                <p className="text-sm text-green-600 font-medium">
-                  Change: Rs. {(parseFloat(payAmount) - total).toLocaleString()}
-                </p>
+          <div className="space-y-3 py-2">
+            {/* Bill Summary */}
+            <div className="bg-muted/50 rounded-lg p-3 space-y-1.5">
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Subtotal</span><span>Rs. {subtotal.toLocaleString()}</span>
+              </div>
+              {showTax && (
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>{taxRate > 0 ? `Tax (${taxRate}%)` : 'Tax'}</span>
+                  <span>Rs. {taxAmount.toLocaleString()}</span>
+                </div>
               )}
-              {parseFloat(payAmount) < total && payAmount !== "" && (
-                <p className="text-sm text-destructive">
-                  Amount kam hai — Rs. {(total - parseFloat(payAmount)).toLocaleString()} aur chahiye
-                </p>
+              {showDonation && (
+                <div className="flex justify-between text-xs text-purple-600">
+                  <span>Donation</span><span>Rs. 1.00</span>
+                </div>
               )}
+              <div className="flex justify-between font-bold text-base pt-1.5 border-t">
+                <span>Total</span><span>Rs. {total.toLocaleString()}</span>
+              </div>
             </div>
+
+            {/* Payment Method Tabs */}
+            <div>
+              <Label className="text-xs text-muted-foreground mb-1.5 block">Payment Method</Label>
+              <div className="grid grid-cols-4 gap-1.5">
+                {[
+                  { key: "cash",   label: "Cash",   Icon: Banknote },
+                  { key: "card",   label: "Card",   Icon: CreditCard },
+                  { key: "wallet", label: "Wallet", Icon: QrCode },
+                ].map(({ key, label, Icon }) => (
+                  <Button key={key} size="sm"
+                    variant={!isSplitMode && payMethod === key ? "default" : "outline"}
+                    className="flex flex-col h-auto py-2 gap-1"
+                    onClick={() => { setPayMethod(key); setIsSplitMode(false) }}
+                  >
+                    <Icon className="w-4 h-4" />
+                    <span className="text-[11px]">{label}</span>
+                  </Button>
+                ))}
+                <Button size="sm"
+                  variant={isSplitMode ? "default" : "outline"}
+                  className="flex flex-col h-auto py-2 gap-1"
+                  onClick={() => setIsSplitMode(true)}
+                >
+                  <Split className="w-4 h-4" />
+                  <span className="text-[11px]">Split</span>
+                </Button>
+              </div>
+            </div>
+
+            {/* Single Method: Cash received */}
+            {!isSplitMode && (
+              <div className="space-y-1.5">
+                {payMethod === "cash" ? (
+                  <>
+                    <Label className="text-xs">Amount Received</Label>
+                    <Input type="number" value={payAmount}
+                      onChange={e => setPayAmount(e.target.value)}
+                      placeholder={`Min Rs. ${total.toLocaleString()}`}
+                    />
+                    {parseFloat(payAmount) > total && (
+                      <p className="text-sm text-green-600 font-medium">
+                        Change: Rs. {(parseFloat(payAmount) - total).toLocaleString()}
+                      </p>
+                    )}
+                    {parseFloat(payAmount) < total && payAmount !== "" && (
+                      <p className="text-sm text-destructive">
+                        Rs. {(total - parseFloat(payAmount)).toLocaleString()} aur chahiye
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-xs text-muted-foreground text-center py-1">
+                    {payMethod === "card" ? "Card se exact amount lena hoga" : "Wallet se exact amount lena hoga"}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Split Mode */}
+            {isSplitMode && (() => {
+              const splitPaid      = splitRows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
+              const splitRemaining = parseFloat((total - splitPaid).toFixed(2))
+              const cashPaid       = splitRows.filter(r => r.method === "cash").reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
+              const nonCashPaid    = splitRows.filter(r => r.method !== "cash").reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
+              const cashNeeded     = Math.max(0, total - nonCashPaid)
+              const splitChange    = cashPaid > cashNeeded ? parseFloat((cashPaid - cashNeeded).toFixed(2)) : 0
+              return (
+                <div className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
+                  {splitRows.map((row, idx) => (
+                    <div key={idx} className="flex gap-2 items-center">
+                      <Select value={row.method} onValueChange={v => setSplitRows(prev => prev.map((r, i) => i === idx ? { ...r, method: v } : r))}>
+                        <SelectTrigger className="w-26 h-8 shrink-0 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="cash">Cash</SelectItem>
+                          <SelectItem value="card">Card</SelectItem>
+                          <SelectItem value="wallet">Wallet</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input type="number" placeholder="Amount" value={row.amount}
+                        onChange={e => setSplitRows(prev => prev.map((r, i) => i === idx ? { ...r, amount: e.target.value } : r))}
+                        className="flex-1 h-8 text-sm"
+                      />
+                      {splitRows.length > 2 && (
+                        <button onClick={() => setSplitRows(prev => prev.filter((_, i) => i !== idx))}
+                          className="text-muted-foreground hover:text-destructive shrink-0">
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  {splitRows.length < 3 && (
+                    <Button variant="outline" size="sm" className="w-full h-7 text-xs"
+                      onClick={() => setSplitRows(prev => [...prev, { method: "wallet", amount: "" }])}>
+                      <Plus className="w-3 h-3 mr-1" /> Add Method
+                    </Button>
+                  )}
+                  {/* Summary */}
+                  <div className="rounded-md bg-muted/60 p-2 space-y-1 text-xs border">
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>Entered</span><span className="font-medium text-foreground">Rs. {splitPaid.toLocaleString()}</span>
+                    </div>
+                    {splitRemaining > 0.009 && (
+                      <div className="flex justify-between font-semibold text-destructive">
+                        <span>Remaining</span><span>Rs. {splitRemaining.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {splitChange > 0 && (
+                      <div className="flex justify-between font-semibold text-green-600">
+                        <span>Change (Cash)</span><span>Rs. {splitChange.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {splitRemaining <= 0.009 && splitChange === 0 && (
+                      <p className="text-green-600 font-medium">✓ Payment complete</p>
+                    )}
+                  </div>
+                </div>
+              )
+            })()}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setPayDialogOpen(false)}>Cancel</Button>
             <Button
               onClick={handleCompleteConfirm}
-              disabled={submitting || !payAmount || parseFloat(payAmount) < total}
+              disabled={submitting || (isSplitMode
+                ? splitRows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0) < total
+                : (payMethod === "cash" ? (!payAmount || parseFloat(payAmount) < total) : false))}
             >
               {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <CheckCircle2 className="w-4 h-4 mr-1" />}
               Confirm Payment
@@ -776,16 +1038,6 @@ export default function OrderPanel({ open, table, onClose }: Props) {
         </DialogContent>
       </Dialog>
 
-      {orderId && (
-        <BillSplit
-          open={splitOpen}
-          orderId={orderId}
-          total={total}
-          items={cart}
-          onClose={() => setSplitOpen(false)}
-          onPaid={() => { setSplitOpen(false); onClose() }}
-        />
-      )}
     </>
   )
 }

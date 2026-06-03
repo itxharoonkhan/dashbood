@@ -134,12 +134,12 @@ router.get('/all', async (req, res) => {
 router.get('/sales-performance', async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT 
+      SELECT
         DATE(created_at) AS date,
         SUM(final_total) AS revenue,
         COUNT(*) AS total_sales
       FROM sales
-      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+      WHERE status != 'cancelled' AND created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
       GROUP BY DATE(created_at)
       ORDER BY date ASC
     `);
@@ -164,11 +164,13 @@ router.get('/sales-performance', async (req, res) => {
 router.get('/category-distribution', async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT 
+      SELECT
         p.category AS name,
         SUM(si.quantity * si.price) AS value
       FROM sale_items si
       JOIN products p ON si.product_id = p.id
+      JOIN sales s ON si.sale_id = s.id
+      WHERE s.status != 'cancelled'
       GROUP BY p.category
       ORDER BY value DESC
     `);
@@ -227,11 +229,13 @@ router.get('/tax-summary', async (req, res) => {
 router.get('/profit-loss', async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT 
+      SELECT
         IFNULL(SUM(si.price * si.quantity), 0) AS total_revenue,
         IFNULL(SUM(p.cost_price * si.quantity), 0) AS total_cost
       FROM sale_items si
       JOIN products p ON si.product_id = p.id
+      JOIN sales s ON si.sale_id = s.id
+      WHERE s.status != 'cancelled'
     `);
 
     const revenue = rows[0].total_revenue;
@@ -264,12 +268,12 @@ router.get('/profit-loss', async (req, res) => {
 router.get('/daily-sales', async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT 
+      SELECT
         DATE(created_at) AS date,
         COUNT(*) AS sales_count,
         SUM(final_total) AS revenue
       FROM sales
-      WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+      WHERE status != 'cancelled' AND created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
       GROUP BY DATE(created_at)
       ORDER BY date ASC
     `);

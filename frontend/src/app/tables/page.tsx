@@ -194,10 +194,10 @@ export default function TablesPage() {
                 {tables.filter(t => t.floor_section === section).map(table => (
                   <Card
                     key={table.id}
-                    className={`cursor-pointer border-2 transition-all relative group ${STATUS_COLOR[table.status]}`}
+                    className={`cursor-pointer border-2 transition-all relative group active:scale-95 ${STATUS_COLOR[table.status]}`}
                     onClick={() => handleTableClick(table)}
                   >
-                    <CardContent className="p-4 text-center">
+                    <CardContent className="p-4 text-center min-h-[120px] flex flex-col items-center justify-center">
                       <div className="text-lg font-bold mb-1">{table.name}</div>
                       <div className="flex items-center justify-center gap-1 text-xs text-muted-foreground mb-2">
                         <Users className="w-3 h-3" />
@@ -214,10 +214,10 @@ export default function TablesPage() {
                       {table.item_count ? (
                         <div className="text-xs text-muted-foreground">{table.item_count} item(s)</div>
                       ) : null}
-                      {/* Delete button (admin, available tables) */}
+                      {/* Delete button (admin, available tables) — always visible on touch */}
                       {userRole === "admin" && table.status === "available" && (
                         <button
-                          className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity text-destructive hover:text-destructive/80"
+                          className="absolute top-1.5 right-1.5 w-7 h-7 flex items-center justify-center rounded-md opacity-0 group-hover:opacity-100 touch-always-visible transition-opacity text-destructive hover:bg-destructive/10 active:scale-90"
                           onClick={(e) => handleDeleteTable(table, e)}
                           title="Delete table"
                         >

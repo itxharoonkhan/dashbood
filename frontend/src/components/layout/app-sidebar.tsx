@@ -26,6 +26,7 @@ import {
   Receipt,
   ChefHat,
   UtensilsCrossed,
+  RotateCcw,
 } from "lucide-react"
 
 import {
@@ -42,6 +43,7 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
+import { cn } from "@/lib/utils"
 import {
   Dialog,
   DialogContent,
@@ -360,21 +362,74 @@ export function AppSidebar() {
           style={{ overflowY: 'auto', height: '100%', paddingTop: '16px' }}
         >
           <SidebarMenu className="space-y-4">
-            {items.map((item) => (
-              <SidebarMenuItem key={item.title}>
-                <SidebarMenuButton
-                  asChild
-                  isActive={pathname === item.url}
-                  tooltip={item.title}
-                  className="py-5"
-                >
-                  <Link href={item.url} onClick={saveScroll}>
-                    {(() => { const Icon = item.icon; return <Icon />; })()}
-                    <span>{item.title}</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            ))}
+            {items.map((item) => {
+              if (item.url === '/reports') {
+                const isReportsActive = pathname.startsWith('/reports')
+                const subItems = [
+                  { href: '/reports', label: 'Overview', icon: FileBarChart },
+                  { href: '/reports/return-history', label: 'Return History', icon: RotateCcw },
+                  { href: '/reports/coupons', label: 'Coupons', icon: Tag },
+                ]
+                return (
+                  <SidebarMenuItem key={item.title}>
+                    <div className="group/reports">
+                      <SidebarMenuButton
+                        asChild
+                        isActive={isReportsActive}
+                        tooltip={item.title}
+                        className="py-5"
+                      >
+                        <Link href="/reports" onClick={saveScroll}>
+                          <FileBarChart />
+                          <span>{item.title}</span>
+                          <ChevronRight className="ml-auto opacity-50 transition-transform duration-200 group-hover/reports:rotate-90" />
+                        </Link>
+                      </SidebarMenuButton>
+
+                      {/* Inline sub-items — show on hover within sidebar */}
+                      <div className="hidden group-hover/reports:flex flex-col gap-0.5 mt-0.5 ml-4 pl-3 border-l border-border">
+                        {subItems.map(sub => {
+                          const Icon = sub.icon
+                          const active = pathname === sub.href
+                          return (
+                            <Link
+                              key={sub.href}
+                              href={sub.href}
+                              onClick={saveScroll}
+                              className={cn(
+                                "flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors",
+                                active
+                                  ? "text-primary font-semibold"
+                                  : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                              )}
+                            >
+                              <Icon className="w-3.5 h-3.5 shrink-0" />
+                              {sub.label}
+                            </Link>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </SidebarMenuItem>
+                )
+              }
+
+              return (
+                <SidebarMenuItem key={item.title}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === item.url}
+                    tooltip={item.title}
+                    className="py-5"
+                  >
+                    <Link href={item.url} onClick={saveScroll}>
+                      {(() => { const Icon = item.icon; return <Icon />; })()}
+                      <span>{item.title}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )
+            })}
           </SidebarMenu>
         </div>
       </SidebarContent>

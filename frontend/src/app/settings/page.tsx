@@ -14,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Store, Bell, CreditCard, Palette, Save, Loader2, Users, LockOpen, Lock, Trash2 } from "lucide-react"
+import { Store, Bell, CreditCard, Palette, Save, Loader2, Users, LockOpen, Lock, Trash2, ChefHat } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import {
   AlertDialog,
@@ -55,6 +55,7 @@ interface Settings {
   theme: string
   invoice_prefix: string
   low_stock_alert: boolean
+  mode: "retail" | "restaurant"
 }
 
 export default function SettingsPage() {
@@ -74,6 +75,7 @@ export default function SettingsPage() {
     theme: 'light',
     invoice_prefix: 'INV',
     low_stock_alert: true,
+    mode: 'retail',
   })
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
@@ -165,6 +167,7 @@ export default function SettingsPage() {
           theme: raw.theme || 'light',
           invoice_prefix: raw.invoice_prefix || 'INV',
           low_stock_alert: raw.low_stock_alert !== undefined ? Boolean(raw.low_stock_alert) : true,
+          mode: raw.mode === 'restaurant' ? 'restaurant' : 'retail',
         })
       } catch (err) {
         console.error("Failed to load settings", err)
@@ -188,6 +191,7 @@ export default function SettingsPage() {
     setSaving(true)
     try {
       await api.put("/settings", settings)
+      localStorage.setItem('posMode', settings.mode)
       toast({
         title: "Settings saved",
         description: "Your preferences have been updated successfully.",
@@ -362,6 +366,18 @@ export default function SettingsPage() {
               </div>
               <p className="text-xs text-muted-foreground">0% se 100% tak koi bhi value enter karein (e.g. 3, 5, 7.5)</p>
             </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Invoice Prefix</label>
+              <Input
+                value={settings.invoice_prefix ?? "INV"}
+                onChange={(e) => updateSetting("invoice_prefix", e.target.value.toUpperCase().slice(0, 10))}
+                placeholder="INV"
+                maxLength={10}
+              />
+              <p className="text-xs text-muted-foreground">
+                Receipt number format: <span className="font-mono font-semibold">{settings.invoice_prefix || "INV"}-000001</span>
+              </p>
+            </div>
           </CardContent>
         </Card>
 
@@ -405,6 +421,35 @@ export default function SettingsPage() {
         </Card>
 
       </div>
+
+      {/* POS Mode */}
+      {isAdmin && (
+        <Card>
+          <CardHeader>
+            <ChefHat className="w-5 h-5 text-primary mb-2" />
+            <CardTitle>POS Mode</CardTitle>
+            <CardDescription>Switch between Retail and Restaurant mode</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <label className="text-sm font-medium">Restaurant Mode</label>
+                <p className="text-xs text-muted-foreground">
+                  Enables Table Management and Kitchen Display in the sidebar
+                </p>
+              </div>
+              <Switch
+                checked={settings.mode === "restaurant"}
+                onCheckedChange={(v) => updateSetting("mode", v ? "restaurant" : "retail")}
+              />
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground bg-muted/50 rounded p-2">
+              Current mode: <span className="font-semibold capitalize">{settings.mode}</span>
+              {settings.mode === "restaurant" ? " — Tables & Kitchen links visible in sidebar" : " — Standard retail POS"}
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {isAdmin && (
         <Card>

@@ -139,6 +139,44 @@ router.get('/', checkRole(['admin', 'cashier']), async (req, res) => {
 });
 
 // ===============================
+// SUGGEST NEXT GLOBAL SKU
+// ===============================
+router.get('/next-sku', checkRole(['admin', 'cashier']), async (req, res) => {
+  try {
+    // Get all SKUs, find highest numeric part
+    const [rows] = await db.query(
+      `SELECT sku FROM products WHERE sku IS NOT NULL AND sku != '' ORDER BY id DESC`
+    );
+
+    let nextNum = 1;
+
+    for (const row of rows) {
+      const sku = row.sku || '';
+      // Extract trailing digits e.g. "ELE007" → 7, "007" → 7, "ICE-012" → 12
+      const match = sku.match(/(\d+)$/);
+      if (match) {
+        const num = parseInt(match[1]);
+        if (num >= nextNum) nextNum = num + 1;
+      }
+    }
+
+    // Preserve same digit width as last SKU (e.g. "007" → 3 digits)
+    let padWidth = 3;
+    if (rows.length > 0) {
+      const lastSku = rows[0].sku || '';
+      const match = lastSku.match(/(\d+)$/);
+      if (match) padWidth = Math.max(match[1].length, 3);
+    }
+
+    const sku = String(nextNum).padStart(padWidth, '0');
+    res.json({ success: true, sku });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Error generating SKU' });
+  }
+});
+
+// ===============================
 // GENERATE NEXT SKU FOR CATEGORY
 // ===============================
 router.get('/generate-sku', checkRole(['admin', 'cashier']), async (req, res) => {

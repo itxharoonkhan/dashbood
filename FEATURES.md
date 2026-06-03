@@ -81,17 +81,9 @@
 - Barcode scan karke ya manually type karke enter kar sakte hain
 - Backend API (`POST /products`, `PUT /products/:id`) mein barcode properly save hota hai
 
-### ✅ 16. Camera-Based Barcode Scanner
-- POS Terminal (Sales page) mein barcode input ke saath **📷 Camera button**
-- Click karo → dialog khulta hai with live camera feed
-- **Scan frame** (corner brackets + animated scan line) — barcode align karne ke liye
-- Barcode detect hone pe: dialog band, `handleBarcodeSearch()` call, product cart mein
-- **Multi-camera support**: back/front camera, Switch button agar multiple cameras hon
-- Back camera automatically prefer hoti hai (mobile pe)
-- Permission denied ya camera nahi → clear error message
-- **2 second cooldown** — ek scan ke baad dobara scan nahi hoga immediately
-- Library: `@zxing/browser` (CODE128, EAN-13, EAN-8, QR, aur 20+ formats)
-- File: `frontend/src/components/sales/camera-scanner.tsx`
+### ~~16. Camera-Based Barcode Scanner~~ — Removed
+- Camera button sales page se remove kar diya gaya
+- USB barcode scanner wala input field still available hai
 
 ### ✅ 17. Barcode Label Print
 - Inventory page mein har product row pe 🖨️ (Print Label) button
@@ -143,18 +135,19 @@
 
 ---
 
-<!-- ### 3. Expense Tracking
-**Kya banana hai:**
-- Admin shop ke kharchay record kare (rent, bijli, staff salary, etc.)
-- Expense categories: Fixed / Variable
-- Monthly expense summary report mein bhi aaye
-- P&L report mein deduct ho
+### ✅ Touch Screen Optimization (Touch Laptop Support) — DONE
+**Kya kiya:**
+- Cart `+/-` buttons bade kiye: `w-6 h-6` → `w-9 h-9` (sales page + OrderPanel)
+- Table card delete button ab hamesha visible hai touch pe (`touch-always-visible` CSS class)
+- On-screen shortcut buttons add kiye (F2: Search, F4: Pay) — sirf touch devices pe dikhte hain
+- Input fields min-height 44px `@media (pointer: coarse)` se
+- Table cards min-height 120px, `active:scale-95` tap feedback
+- OrderPanel guest count +/- buttons bade kiye: `h-5 w-5` → `h-8 w-8`
+- Product grid buttons: `min-h-[72px]`, `active:scale-95`
 
-**Kahan banana hai:**
-- New page: `frontend/src/app/expenses/page.tsx`
-- New route: `Backend/routes/expenses.js` (CRUD + monthly summary)
-- New DB table: `expenses (id, category, description, amount, date, created_by)`
-- Sidebar mein "Expenses" link add karo -->
+---
+
+
 
 ---
 
@@ -207,17 +200,19 @@
 | Barcode scan → cart | ✅ | ✅ | Done |
 | Barcode field in product form | ✅ | ✅ | Done |
 | Barcode label print | ✅ | ✅ | Done |
-| Camera barcode scan | — | ✅ | Done |
+| Camera barcode scan | — | ~~Removed~~ | Removed |
 | Shift history filters | — | ✅ | Done |
 | POS keyboard shortcuts | — | ✅ | Done |
 | Custom receipt design | ✅ | ✅ | Done |
 | Expense tracking | ❌ | ❌ | **Pending** |
+| Touch screen optimization | — | ✅ | Done |
 | Split payment | ✅ | ✅ | Done |
 | Loyalty points | ✅ | ✅ | Done |
 | Supplier management | ✅ | ✅ | Done |
 | Reports export | ✅ | ✅ | Done |
 | Table management | ✅ | ✅ | Done |
-| KOT slip print | ✅ | ✅ | Done |
+| KOT slip print | ✅ | ✅ |
+ Done |
 | Bill split (table) | ✅ | ✅ | Done |
 | Restaurant → sales integration | ✅ | ✅ | Done |
 
@@ -239,12 +234,7 @@
 - Attendance vs schedule comparison
 - **Kab banao:** Jab staff 5+ ho jaye
 
-<!-- 
-### Receipt Email / WhatsApp
-- Sale ke baad customer ko receipt email ya WhatsApp pe bhejo
-- Settings mein toggle: auto-send on / off
-- Customer ka email/phone number profile mein save ho
-- **Kab banao:** Jab customer database grow ho jaye -->
+
 
 ### ~~Restaurant Mode~~ ✅ Mukammal Ho Gaya
 - Table management, KOT slip, bill split — sab implement ho gaya

@@ -36,10 +36,30 @@ router.get('/', checkRole(['admin', 'cashier']), async (req, res) => {
 
     const [rows] = await db.query(sql, values);
 
+    // Attach variants to each product
+    const productIds = rows.map(r => r.id);
+    const variantMap = {};
+    if (productIds.length > 0) {
+      const [variants] = await db.query(
+        'SELECT * FROM product_variants WHERE product_id IN (?) AND is_active = 1 ORDER BY sort_order ASC',
+        [productIds]
+      );
+      for (const v of variants) {
+        if (!variantMap[v.product_id]) variantMap[v.product_id] = [];
+        variantMap[v.product_id].push(v);
+      }
+    }
+
+    const itemsWithVariants = rows.map(item => ({
+      ...item,
+      has_variants: !!(variantMap[item.id] && variantMap[item.id].length > 0),
+      variants: variantMap[item.id] || [],
+    }));
+
     res.json({
       success: true,
       data: {
-        items: rows
+        items: itemsWithVariants
       }
     });
 
