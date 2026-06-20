@@ -2,16 +2,17 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// 🔐 Middleware
+// Middleware
 const verifyToken = require('../middleware/authMiddleware');
 const checkRole = require('../middleware/roleMiddleware');
+const { nextTenantNumber } = require('../utils/tenantSequence');
 
 
 // ===============================
 // CREATE SALE (Admin + Cashier)
 // ===============================
 router.post('/', verifyToken, checkRole(['admin', 'cashier']), async (req, res) => {
-  const { customer_id: provided_id, items, discount = 0, payment_method, payments, amount_paid, tax: frontendTax, customer_name, customer_phone, coupon_code, coupon_discount = 0, loyalty_points_redeem = 0 } = req.body;
+  const { customer_id: provided_id, items, discount = 0, payment_method, payments, amount_paid, cash_received, tax: frontendTax, customer_name, customer_phone, coupon_code, coupon_discount = 0, loyalty_points_redeem = 0 } = req.body;
   const isSplit = Array.isArray(payments) && payments.length >= 2;
   const resolvedPaymentMethod = isSplit ? 'split' : payment_method;
 
@@ -22,7 +23,6 @@ router.post('/', verifyToken, checkRole(['admin', 'cashier']), async (req, res) 
     });
   }
 
-  // ✅ Validate amount_paid
   if (amount_paid === undefined || amount_paid === null || typeof amount_paid !== 'number') {
     return res.status(400).json({
       success: false,
@@ -35,10 +35,10 @@ router.post('/', verifyToken, checkRole(['admin', 'cashier']), async (req, res) 
   try {
     await connection.beginTransaction();
 
-    // Link sale to cashier's active shift if one exists
+    // Link sale to cashier's active shift if one exists (scoped to tenant)
     const [activeShift] = await connection.query(
-      "SELECT id FROM shifts WHERE cashier_id = ? AND status = 'open' LIMIT 1",
-      [req.user.id]
+      "SELECT id FROM shifts WHERE cashier_id = ? AND status = 'open' AND tenant_id = ? LIMIT 1",
+      [req.user.id, req.user.tenant_id]
     );
     const shift_id = activeShift.length > 0 ? activeShift[0].id : null;
 
@@ -46,39 +46,38 @@ router.post('/', verifyToken, checkRole(['admin', 'cashier']), async (req, res) 
 
     if (customer_name && !customer_id) {
       if (customer_phone) {
-        // Name + Phone → phone se dhundo ya naya banao
         const [existing] = await connection.query(
-          "SELECT id FROM customers WHERE phone = ?", [customer_phone]
+          "SELECT id FROM customers WHERE phone = ? AND tenant_id = ?", [customer_phone, req.user.tenant_id]
         );
         if (existing.length > 0) {
           customer_id = existing[0].id;
           await connection.query("UPDATE customers SET name = ? WHERE id = ?", [customer_name, customer_id]);
         } else {
+          const customer_number = await nextTenantNumber(connection, 'customers', req.user.tenant_id);
           const [newCustomer] = await connection.query(
-            "INSERT INTO customers (name, phone, created_at) VALUES (?, ?, NOW())",
-            [customer_name, customer_phone]
+            "INSERT INTO customers (customer_number, name, phone, tenant_id, created_at) VALUES (?, ?, ?, ?, NOW())",
+            [customer_number, customer_name, customer_phone, req.user.tenant_id]
           );
           customer_id = newCustomer.insertId;
         }
       } else {
-        // Sirf Name → customers table mein save karo (phone null), UI mein filter se chhupaayenge
         const [existing] = await connection.query(
-          "SELECT id FROM customers WHERE name = ? AND (phone IS NULL OR phone = '') LIMIT 1",
-          [customer_name]
+          "SELECT id FROM customers WHERE name = ? AND (phone IS NULL OR phone = '') AND tenant_id = ? LIMIT 1",
+          [customer_name, req.user.tenant_id]
         );
         if (existing.length > 0) {
           customer_id = existing[0].id;
         } else {
+          const customer_number = await nextTenantNumber(connection, 'customers', req.user.tenant_id);
           const [newCustomer] = await connection.query(
-            "INSERT INTO customers (name, created_at) VALUES (?, NOW())",
-            [customer_name]
+            "INSERT INTO customers (customer_number, name, tenant_id, created_at) VALUES (?, ?, ?, NOW())",
+            [customer_number, customer_name, req.user.tenant_id]
           );
           customer_id = newCustomer.insertId;
         }
       }
     }
 
-    // ✅ Calculate totals
     let subtotal = 0;
     for (let item of items) {
       subtotal += item.quantity * item.price;
@@ -89,19 +88,18 @@ router.post('/', verifyToken, checkRole(['admin', 'cashier']), async (req, res) 
     const pointsToRedeem = parseInt(loyalty_points_redeem) || 0;
     const final_total = amount_paid;
 
-    // ✅ Validate loyalty points redemption
     if (pointsToRedeem > 0) {
       if (!customer_id && !customer_phone) {
         throw new Error('Customer required for loyalty points redemption');
       }
     }
 
-    // Validate coupon within transaction if provided
+    // Validate coupon within transaction if provided (scoped to tenant)
     let coupon_id = null;
     if (coupon_code) {
       const [couponRows] = await connection.query(
-        "SELECT * FROM coupons WHERE code = ? AND is_active = 1 AND is_deleted = 0",
-        [coupon_code.trim().toUpperCase()]
+        "SELECT * FROM coupons WHERE code = ? AND is_active = 1 AND is_deleted = 0 AND tenant_id = ?",
+        [coupon_code.trim().toUpperCase(), req.user.tenant_id]
       );
       if (couponRows.length > 0) {
         const c = couponRows[0];
@@ -113,7 +111,6 @@ router.post('/', verifyToken, checkRole(['admin', 'cashier']), async (req, res) 
       }
     }
 
-    // ✅ Validate split payment sum
     if (isSplit) {
       const splitSum = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
       if (Math.abs(splitSum - amount_paid) > 0.01) {
@@ -121,22 +118,26 @@ router.post('/', verifyToken, checkRole(['admin', 'cashier']), async (req, res) 
       }
     }
 
-    // ✅ Insert Sale
+    const cashReceivedVal = (typeof cash_received === 'number' && cash_received > 0) ? cash_received : null;
+
+    // Per-tenant invoice number (1, 2, 3... scoped to this tenant)
+    const sale_number = await nextTenantNumber(connection, 'sales', req.user.tenant_id);
+
+    // Insert Sale with tenant_id
     const [saleResult] = await connection.query(
       `INSERT INTO sales
-      (customer_id, cashier_id, shift_id, total, discount, tax, final_total, payment_method, coupon_id, coupon_discount, loyalty_points_redeemed, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [customer_id || null, req.user.id, shift_id, subtotal, discount, tax, final_total, resolvedPaymentMethod, coupon_id, appliedCouponDiscount, pointsToRedeem]
+      (sale_number, customer_id, cashier_id, shift_id, total, discount, tax, final_total, cash_received, payment_method, coupon_id, coupon_discount, loyalty_points_redeemed, tenant_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [sale_number, customer_id || null, req.user.id, shift_id, subtotal, discount, tax, final_total, cashReceivedVal, resolvedPaymentMethod, coupon_id, appliedCouponDiscount, pointsToRedeem, req.user.tenant_id]
     );
 
     const sale_id = saleResult.insertId;
 
-    // ✅ Insert Sale Items + Update Stock
+    // Insert Sale Items + Update Stock
     for (let item of items) {
-      // 🔍 Check stock first
       const [productRows] = await connection.query(
-        "SELECT stock, name FROM products WHERE id = ?",
-        [item.product_id]
+        "SELECT stock, name FROM products WHERE id = ? AND tenant_id = ?",
+        [item.product_id, req.user.tenant_id]
       );
 
       if (productRows.length === 0) {
@@ -150,23 +151,19 @@ router.post('/', verifyToken, checkRole(['admin', 'cashier']), async (req, res) 
         throw new Error(`Insufficient stock for ${productName}. Available: ${currentStock}`);
       }
 
-      // 🧾 Insert item
       await connection.query(
         `INSERT INTO sale_items (sale_id, product_id, quantity, price)
          VALUES (?, ?, ?, ?)`,
         [sale_id, item.product_id, item.quantity, item.price]
       );
 
-      // 📦 Update stock
       await connection.query(
-        `UPDATE products
-         SET stock = stock - ?
-         WHERE id = ?`,
+        `UPDATE products SET stock = stock - ? WHERE id = ?`,
         [item.quantity, item.product_id]
       );
     }
 
-    // ✅ Insert split payment breakdown
+    // Insert split payment breakdown
     if (isSplit) {
       for (const p of payments) {
         await connection.query(
@@ -176,7 +173,7 @@ router.post('/', verifyToken, checkRole(['admin', 'cashier']), async (req, res) 
       }
     }
 
-    // ✅ Record coupon usage
+    // Record coupon usage
     if (coupon_id && appliedCouponDiscount > 0) {
       await connection.query(
         "INSERT INTO coupon_usages (coupon_id, sale_id, discount) VALUES (?, ?, ?)",
@@ -188,7 +185,7 @@ router.post('/', verifyToken, checkRole(['admin', 'cashier']), async (req, res) 
       );
     }
 
-    // ✅ Loyalty: Redeem points (deduct before commit)
+    // Loyalty: Redeem points (deduct before commit)
     if (pointsToRedeem > 0 && customer_id) {
       const [[cust]] = await connection.query(
         'SELECT loyalty_points FROM customers WHERE id = ? FOR UPDATE',
@@ -205,18 +202,19 @@ router.post('/', verifyToken, checkRole(['admin', 'cashier']), async (req, res) 
       await connection.query(
         `INSERT INTO loyalty_transactions (customer_id, sale_id, type, points, balance_after, note)
          VALUES (?, ?, 'redeem', ?, ?, ?)`,
-        [customer_id, sale_id, pointsToRedeem, newBalance, `Redeemed at sale #${sale_id}`]
+        [customer_id, sale_id, pointsToRedeem, newBalance, `Redeemed at sale #${sale_number}`]
       );
     }
 
     await connection.commit();
 
-    // ✅ Loyalty: Earn points (after commit — non-blocking)
+    // Loyalty: Earn points (after commit — non-blocking)
     let points_earned = 0;
     if (customer_id) {
       try {
         const [[loyaltySettings]] = await db.query(
-          'SELECT loyalty_rate FROM settings LIMIT 1'
+          'SELECT loyalty_rate FROM settings WHERE tenant_id = ?',
+          [req.user.tenant_id]
         );
         const rate = parseFloat(loyaltySettings?.loyalty_rate) || 100;
         points_earned = Math.floor(final_total / rate);
@@ -231,11 +229,11 @@ router.post('/', verifyToken, checkRole(['admin', 'cashier']), async (req, res) 
           await db.query(
             `INSERT INTO loyalty_transactions (customer_id, sale_id, type, points, balance_after, note)
              VALUES (?, ?, 'earn', ?, ?, ?)`,
-            [customer_id, sale_id, points_earned, newBal, `Earned from sale #${sale_id}`]
+            [customer_id, sale_id, points_earned, newBal, `Earned from sale #${sale_number}`]
           );
         }
       } catch (loyaltyErr) {
-        console.warn('⚠️ Loyalty earn failed (non-critical):', loyaltyErr.message);
+        console.warn('Loyalty earn failed (non-critical):', loyaltyErr.message);
       }
     }
 
@@ -243,6 +241,7 @@ router.post('/', verifyToken, checkRole(['admin', 'cashier']), async (req, res) 
       success: true,
       message: "Sale completed successfully",
       sale_id,
+      sale_number,
       final_total,
       change: 0,
       points_earned
@@ -250,7 +249,7 @@ router.post('/', verifyToken, checkRole(['admin', 'cashier']), async (req, res) 
 
   } catch (err) {
     if (connection) await connection.rollback();
-    console.error('❌ Sale Error:', err.message);
+    console.error('Sale Error:', err.message);
 
     res.status(400).json({
       success: false,
@@ -268,13 +267,14 @@ router.post('/', verifyToken, checkRole(['admin', 'cashier']), async (req, res) 
 router.get('/', verifyToken, checkRole(['admin']), async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT 
-        s.*, 
+      SELECT
+        s.*,
         c.name AS customer_name
       FROM sales s
       LEFT JOIN customers c ON s.customer_id = c.id
+      WHERE s.tenant_id = ?
       ORDER BY s.id DESC
-    `);
+    `, [req.user.tenant_id]);
 
     res.json({
       success: true,
@@ -295,10 +295,17 @@ router.get('/', verifyToken, checkRole(['admin']), async (req, res) => {
 // ===============================
 router.get('/returns/list', verifyToken, checkRole(['admin']), async (req, res) => {
   try {
+    const { startDate, endDate } = req.query;
+    const dateRx = /^\d{4}-\d{2}-\d{2}$/;
+    const useDateRange = startDate && endDate && dateRx.test(startDate) && dateRx.test(endDate);
+    const dateFilter   = useDateRange ? 'AND DATE(sr.return_date) BETWEEN ? AND ?' : '';
+    const dateParams   = useDateRange ? [startDate, endDate] : [];
+
     const [rows] = await db.query(`
       SELECT
         sr.id,
         sr.sale_id,
+        s.sale_number,
         sr.return_date,
         sr.reason,
         sr.refund_amount,
@@ -308,13 +315,58 @@ router.get('/returns/list', verifyToken, checkRole(['admin']), async (req, res) 
       JOIN sales s ON sr.sale_id = s.id
       LEFT JOIN customers c ON s.customer_id = c.id
       LEFT JOIN sale_return_items sri ON sr.id = sri.return_id
+      WHERE s.tenant_id = ? ${dateFilter}
       GROUP BY sr.id
       ORDER BY sr.id DESC
-    `);
+    `, [req.user.tenant_id, ...dateParams]);
     res.json({ success: true, data: rows });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: "Error fetching returns" });
+  }
+});
+
+// ===============================
+// LOOKUP SALE BY PER-TENANT INVOICE NUMBER (Admin ONLY)
+// Receipts show the per-tenant sale_number, so returns are looked up by it.
+// Must be defined before '/:id' so 'lookup' isn't captured as an id.
+// ===============================
+router.get('/lookup/:number', verifyToken, checkRole(['admin']), async (req, res) => {
+  try {
+    const number = parseInt(req.params.number, 10);
+    if (!Number.isInteger(number)) {
+      return res.status(400).json({ success: false, message: "Invalid invoice number" });
+    }
+
+    const [saleRows] = await db.query(
+      `SELECT s.*, c.name AS customer_name, c.phone AS customer_phone
+       FROM sales s LEFT JOIN customers c ON s.customer_id = c.id
+       WHERE s.sale_number = ? AND s.tenant_id = ?`,
+      [number, req.user.tenant_id]
+    );
+
+    if (saleRows.length === 0) {
+      return res.status(404).json({ success: false, message: "Sale not found for this invoice number" });
+    }
+
+    const sale = saleRows[0];
+
+    const [itemsRows] = await db.query(
+      `SELECT si.*, p.name AS product_name
+       FROM sale_items si JOIN products p ON si.product_id = p.id
+       WHERE si.sale_id = ?`,
+      [sale.id]
+    );
+
+    const [paymentsRows] = await db.query(
+      "SELECT method, amount FROM sale_payments WHERE sale_id = ? ORDER BY id",
+      [sale.id]
+    );
+
+    res.json({ success: true, data: { sale, items: itemsRows, payments: paymentsRows } });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Error looking up sale" });
   }
 });
 
@@ -328,8 +380,8 @@ router.get('/:id', verifyToken, checkRole(['admin']), async (req, res) => {
     const [saleRows] = await db.query(
       `SELECT s.*, c.name AS customer_name, c.phone AS customer_phone
        FROM sales s LEFT JOIN customers c ON s.customer_id = c.id
-       WHERE s.id = ?`,
-      [id]
+       WHERE s.id = ? AND s.tenant_id = ?`,
+      [id, req.user.tenant_id]
     );
 
     if (saleRows.length === 0) {
@@ -379,6 +431,10 @@ router.get('/:id/returns', verifyToken, checkRole(['admin']), async (req, res) =
   try {
     const { id } = req.params;
 
+    // Verify sale belongs to tenant
+    const [saleCheck] = await db.query("SELECT id FROM sales WHERE id = ? AND tenant_id = ?", [id, req.user.tenant_id]);
+    if (!saleCheck.length) return res.status(404).json({ success: false, message: "Sale not found" });
+
     const [returnRows] = await db.query(`
       SELECT sr.id, sr.return_date, sr.reason, sr.refund_amount
       FROM sale_returns sr
@@ -421,17 +477,16 @@ router.post('/:id/return', verifyToken, checkRole(['admin']), async (req, res) =
   try {
     await connection.beginTransaction();
 
-    const [saleRows] = await connection.query("SELECT * FROM sales WHERE id = ?", [id]);
+    const [saleRows] = await connection.query("SELECT * FROM sales WHERE id = ? AND tenant_id = ?", [id, req.user.tenant_id]);
     if (saleRows.length === 0) throw new Error("Sale not found");
     if (saleRows[0].status === 'cancelled') throw new Error("Cannot return a cancelled sale");
 
     const [originalItems] = await connection.query("SELECT * FROM sale_items WHERE sale_id = ?", [id]);
 
     const sale = saleRows[0];
-    const saleSubtotal = parseFloat(sale.total) || 0;   // sum of item prices (before discounts)
-    const finalTotal  = parseFloat(sale.final_total) || 0; // actual cash paid by customer
+    const saleSubtotal = parseFloat(sale.total) || 0;
+    const finalTotal  = parseFloat(sale.final_total) || 0;
 
-    // How much of the original subtotal is being returned
     let returnedSubtotal = 0;
 
     for (const item of items) {
@@ -455,11 +510,7 @@ router.post('/:id/return', verifyToken, checkRole(['admin']), async (req, res) =
       returnedSubtotal += item.quantity * parseFloat(original.price);
     }
 
-    // Ratio = what fraction of original purchase is being returned
     const ratio = saleSubtotal > 0 ? Math.min(returnedSubtotal / saleSubtotal, 1) : 0;
-
-    // Refund = proportional to what customer ACTUALLY PAID (final_total)
-    // This correctly handles loyalty/coupon discounts — customer never gets more than they paid
     const refundAmount = parseFloat((finalTotal * ratio).toFixed(2));
 
     const [returnResult] = await connection.query(
@@ -483,18 +534,17 @@ router.post('/:id/return', verifyToken, checkRole(['admin']), async (req, res) =
 
     await connection.commit();
 
-    // ✅ Loyalty: Reverse earned points + Restore redeemed points (non-blocking)
-    let points_reversed = 0;  // earned points taken back
-    let points_restored = 0;  // redeemed points given back
+    // Loyalty: Reverse earned points + Restore redeemed points (non-blocking)
+    let points_reversed = 0;
+    let points_restored = 0;
     if (sale.customer_id) {
       try {
-        const [[loyaltySettings]] = await db.query('SELECT loyalty_rate FROM settings LIMIT 1');
+        const [[loyaltySettings]] = await db.query('SELECT loyalty_rate FROM settings WHERE tenant_id = ?', [req.user.tenant_id]);
         const rate = parseFloat(loyaltySettings?.loyalty_rate) || 100;
 
         const [[cust]] = await db.query('SELECT loyalty_points FROM customers WHERE id = ?', [sale.customer_id]);
         let balance = cust?.loyalty_points || 0;
 
-        // 1. Reverse earned points from this sale (proportional to items returned)
         const pointsEarned = Math.floor(finalTotal / rate);
         const pointsToReverse = Math.floor(pointsEarned * ratio);
         if (pointsToReverse > 0) {
@@ -503,12 +553,11 @@ router.post('/:id/return', verifyToken, checkRole(['admin']), async (req, res) =
           await db.query('UPDATE customers SET loyalty_points = ? WHERE id = ?', [balance, sale.customer_id]);
           await db.query(
             `INSERT INTO loyalty_transactions (customer_id, sale_id, type, points, balance_after, note)
-             VALUES (?, ?, 'refund', ?, ?, ?)`,
+             VALUES (?, ?, 'reverse', ?, ?, ?)`,
             [sale.customer_id, sale.id, pointsToReverse, balance, `Earned pts reversed — return on sale #${sale.id}`]
           );
         }
 
-        // 2. Restore redeemed points (customer used these to pay — give them back)
         const redeemedPts = parseInt(sale.loyalty_points_redeemed) || 0;
         const pointsToRestore = Math.floor(redeemedPts * ratio);
         if (pointsToRestore > 0) {
@@ -522,7 +571,7 @@ router.post('/:id/return', verifyToken, checkRole(['admin']), async (req, res) =
           );
         }
       } catch (loyaltyErr) {
-        console.warn('⚠️ Loyalty return adjustment failed (non-critical):', loyaltyErr.message);
+        console.warn('Loyalty return adjustment failed (non-critical):', loyaltyErr.message);
       }
     }
 
@@ -530,7 +579,7 @@ router.post('/:id/return', verifyToken, checkRole(['admin']), async (req, res) =
 
   } catch (err) {
     await connection.rollback();
-    console.error('❌ Return Error:', err.message);
+    console.error('Return Error:', err.message);
     res.status(400).json({ success: false, message: err.message || "Return failed" });
   } finally {
     connection.release();
@@ -548,10 +597,9 @@ router.put('/:id/cancel', verifyToken, checkRole(['admin']), async (req, res) =>
   try {
     await connection.beginTransaction();
 
-    // 🔍 Check sale
     const [saleRows] = await connection.query(
-      "SELECT * FROM sales WHERE id = ?",
-      [id]
+      "SELECT * FROM sales WHERE id = ? AND tenant_id = ?",
+      [id, req.user.tenant_id]
     );
 
     if (saleRows.length === 0) {
@@ -562,23 +610,18 @@ router.put('/:id/cancel', verifyToken, checkRole(['admin']), async (req, res) =>
       throw new Error("Sale already cancelled");
     }
 
-    // 🔍 Get items
     const [items] = await connection.query(
       "SELECT * FROM sale_items WHERE sale_id = ?",
       [id]
     );
 
-    // 📦 Restore stock
     for (let item of items) {
       await connection.query(
-        `UPDATE products 
-         SET stock = stock + ? 
-         WHERE id = ?`,
+        `UPDATE products SET stock = stock + ? WHERE id = ?`,
         [item.quantity, item.product_id]
       );
     }
 
-    // ❌ Cancel sale
     await connection.query(
       "UPDATE sales SET status = 'cancelled' WHERE id = ?",
       [id]
@@ -586,41 +629,39 @@ router.put('/:id/cancel', verifyToken, checkRole(['admin']), async (req, res) =>
 
     await connection.commit();
 
-    // ✅ Loyalty: Reverse earned points + restore redeemed points (non-blocking)
+    // Loyalty: Reverse earned points + restore redeemed points (non-blocking)
     const sale = saleRows[0];
     if (sale.customer_id) {
       try {
-        const [[loyaltySettings]] = await db.query('SELECT loyalty_rate FROM settings LIMIT 1');
+        const [[loyaltySettings]] = await db.query('SELECT loyalty_rate FROM settings WHERE tenant_id = ?', [req.user.tenant_id]);
         const rate = parseFloat(loyaltySettings?.loyalty_rate) || 100;
 
         const [[cust]] = await db.query('SELECT loyalty_points FROM customers WHERE id = ?', [sale.customer_id]);
         let balance = cust?.loyalty_points || 0;
 
-        // Reverse earned points from this sale
         const pointsEarned = Math.floor(parseFloat(sale.final_total) / rate);
         if (pointsEarned > 0) {
           balance = Math.max(0, balance - pointsEarned);
           await db.query('UPDATE customers SET loyalty_points = ? WHERE id = ?', [balance, sale.customer_id]);
           await db.query(
             `INSERT INTO loyalty_transactions (customer_id, sale_id, type, points, balance_after, note)
-             VALUES (?, ?, 'refund', ?, ?, ?)`,
+             VALUES (?, ?, 'reverse', ?, ?, ?)`,
             [sale.customer_id, sale.id, pointsEarned, balance, `Earn reversed — sale #${sale.id} cancelled`]
           );
         }
 
-        // Restore redeemed points from this sale
         const pointsRedeemed = parseInt(sale.loyalty_points_redeemed) || 0;
         if (pointsRedeemed > 0) {
           balance = balance + pointsRedeemed;
           await db.query('UPDATE customers SET loyalty_points = ? WHERE id = ?', [balance, sale.customer_id]);
           await db.query(
             `INSERT INTO loyalty_transactions (customer_id, sale_id, type, points, balance_after, note)
-             VALUES (?, ?, 'refund', ?, ?, ?)`,
+             VALUES (?, ?, 'reverse', ?, ?, ?)`,
             [sale.customer_id, sale.id, pointsRedeemed, balance, `Redeemed points restored — sale #${sale.id} cancelled`]
           );
         }
       } catch (loyaltyErr) {
-        console.warn('⚠️ Loyalty cancel reversal failed (non-critical):', loyaltyErr.message);
+        console.warn('Loyalty cancel reversal failed (non-critical):', loyaltyErr.message);
       }
     }
 
@@ -631,9 +672,7 @@ router.put('/:id/cancel', verifyToken, checkRole(['admin']), async (req, res) =>
 
   } catch (err) {
     await connection.rollback();
-
     console.error(err);
-
     res.status(400).json({
       success: false,
       message: err.message || "Cancel failed"

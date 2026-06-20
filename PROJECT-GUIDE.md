@@ -1,6 +1,6 @@
 # Elites POS System — Project Guide
 
-Yeh guide poore POS system ka complete explanation hai. Har folder, file, aur feature ka kaam yahan explain kiya gaya hai.
+Is document mein Elites POS System ki mukammal technical documentation di gayi hai. Har module, route, aur component ka maqsad aur kaam yahan clearly explain kiya gaya hai.
 
 ---
 
@@ -8,29 +8,47 @@ Yeh guide poore POS system ka complete explanation hai. Har folder, file, aur fe
 
 1. [Project Overview](#1-project-overview)
 2. [Folder Structure](#2-folder-structure)
-3. [Backend — Poora Explanation](#3-backend)
-4. [Frontend — Poora Explanation](#4-frontend)
+3. [Backend — Architecture & Implementation](#3-backend--architecture--implementation)
+4. [Frontend — Architecture & Implementation](#4-frontend--architecture--implementation)
 5. [Database Tables](#5-database-tables)
 6. [Environment Variables](#6-environment-variables)
-7. [Pages / Routes](#7-pages--routes)
+7. [Pages & Routes](#7-pages--routes)
 8. [Default Login](#8-default-login)
+9. [Implemented Features Summary](#9-implemented-features-summary)
+10. [Deployment Notes](#10-deployment-notes)
 
 ---
 
 ## 1. Project Overview
 
-Yeh ek **full-stack Point of Sale (POS) system** hai jo retail shops ke liye banaya gaya hai.
+Elites POS ek **full-stack, multi-tenant Point of Sale system** hai jo **retail shops aur restaurants** dono ke liye design kiya gaya hai.
 
-| Part      | Technology         | Port  |
-|-----------|--------------------|-------|
-| Frontend  | Next.js 15 + React | 9002  |
-| Backend   | Node.js + Express  | 5001  |
-| Database  | MySQL              | 3306  |
-| AI        | Google Gemini      | —     |
+- **Retail Mode** — Counter-based sales: barcode scan, cart management, checkout
+- **Restaurant Mode** — Table management, KOT printing, kitchen display, bill splitting
 
-**Do roles hain:**
-- **Admin** — sab kuch dekh aur kar sakta hai
-- **Cashier** — sirf sales aur shift manage kar sakta hai
+| Layer     | Technology              | Port |
+|-----------|-------------------------|------|
+| Frontend  | Next.js 15 + React 19   | 9002 |
+| Backend   | Node.js + Express.js    | 5001 |
+| Database  | MySQL                   | 3306 |
+| AI        | Google Gemini (Genkit)  | —    |
+
+### Multi-Tenant Architecture
+
+System **multi-tenant** hai — ek hi deployment (ek database + ek backend) par kai alag dukanein (**tenants**) chalti hain. Har tenant ka data `tenant_id` column se **bilkul isolated** hota hai; ek tenant ka data dusre ko kabhi nahi dikhta.
+
+- Tenant **subdomain se nahi**, balki **login (JWT)** se identify hota hai — har user ke JWT token mein uska `tenant_id` hota hai.
+- Har tenant-scoped query `WHERE tenant_id = ?` se filter hoti hai.
+- Naya client onboard karna = SuperAdmin ek tenant bana deta hai (`POST /api/tenants`). Koi server change nahi.
+- `tenants` table har dukan ka record rakhta hai (name, slug, plan, status).
+
+**User Roles:**
+
+| Role        | tenant_id | Access Level                                                        |
+|-------------|-----------|---------------------------------------------------------------------|
+| SuperAdmin  | NULL      | Platform owner — tenants (dukanein) create/manage karta hai          |
+| Admin       | apne tenant ka | Full access apni dukan ke andar — settings, reports, users, all data |
+| Cashier     | apne tenant ka | Sales, shifts, inventory view only (apni dukan ke andar)             |
 
 ---
 
@@ -38,351 +56,451 @@ Yeh ek **full-stack Point of Sale (POS) system** hai jo retail shops ke liye ban
 
 ```
 pos-system/
-├── Backend/                  ← Express.js API server
-│   ├── index.js              ← Server entry point
-│   ├── db.js                 ← MySQL connection pool
-│   ├── schema.sql            ← Database tables ka structure
-│   ├── nodemon.json          ← Dev server config
+├── Backend/                   ← Express.js REST API server
+│   ├── index.js               ← Server entry point, middleware registration
+│   ├── db.js                  ← MySQL connection pool
+│   ├── schema.sql             ← Base database schema
+│   ├── schema_tenant_migration.sql            ← Multi-tenant migration (tenants + tenant_id + superadmin)
+│   ├── schema_tenant_numbering_migration.sql  ← Per-tenant invoice/numbering sequences
+│   ├── schema_softdelete_migration.sql        ← Soft-delete columns
+│   ├── schema_po_numbering_migration.sql      ← Purchase order numbering
+│   ├── schema_image_longtext_migration.sql    ← Product image LONGTEXT
+│   ├── nodemon.json           ← Development server configuration
 │   ├── middleware/
-│   │   ├── authMiddleware.js ← JWT token check
-│   │   ├── roleMiddleware.js ← Admin/cashier access control
-│   │   └── errorMiddleware.js← Global error handler
+│   │   ├── authMiddleware.js      ← JWT token verification (sets req.user.tenant_id)
+│   │   ├── roleMiddleware.js      ← Role-based access control
+│   │   ├── superAdminMiddleware.js ← SuperAdmin-only route guard (tenants management)
+│   │   ├── apiKeyMiddleware.js    ← API-key auth for cron jobs (no JWT)
+│   │   └── errorMiddleware.js     ← Global error handler
+│   ├── utils/
+│   │   └── tenantSequence.js  ← Per-tenant sequential numbers (invoice, customer, PO)
+│   ├── uploads/               ← Receipt logo storage (PNG/JPG/WEBP)
 │   └── routes/
-│       ├── auth.js           ← Login / signup
-│       ├── products.js       ← Inventory management
-│       ├── sales.js          ← POS transactions
-│       ├── dashboard.js      ← Analytics data
-│       ├── customers.js      ← Customer database
-│       ├── reports.js        ← Business reports
-│       ├── settings.js       ← Store settings
-│       ├── menu.js           ← POS menu (products for cashier)
-│       ├── shifts.js         ← Cashier shift management
-│       ├── coupons.js        ← Discount codes
-│       ├── loyalty.js        ← Loyalty points
-│       ├── suppliers.js      ← Vendor management
-│       └── notifications.js  ← Low stock alerts
+│       ├── auth.js            ← Authentication (login, account creation)
+│       ├── tenants.js         ← Tenant (shop) management — SuperAdmin only
+│       ├── products.js        ← Inventory management
+│       ├── sales.js           ← POS transactions
+│       ├── dashboard.js       ← Analytics & summary data
+│       ├── customers.js       ← Customer database
+│       ├── reports.js         ← Business reports (admin only)
+│       ├── settings.js        ← Store configuration + receipt customization
+│       ├── menu.js            ← Cashier-facing product catalog
+│       ├── shifts.js          ← Cashier shift management
+│       ├── coupons.js         ← Discount code management
+│       ├── loyalty.js         ← Loyalty points system
+│       ├── suppliers.js       ← Vendor & purchase order management
+│       ├── notifications.js   ← System alerts (low stock, etc.)
+│       ├── tables.js          ← Restaurant table management
+│       ├── orders.js          ← Restaurant orders & KOT system
+│       ├── kitchen.js         ← Kitchen display & KOT queue
+│       └── expenses.js        ← Business expense tracking
 │
-└── frontend/                 ← Next.js application
+└── frontend/                  ← Next.js 15 application
     └── src/
-        ├── ai/               ← AI integration (Genkit + Gemini)
-        ├── app/              ← Pages aur API routes
-        ├── components/       ← Reusable UI components
-        ├── contexts/         ← Global state (auth, theme, language)
-        ├── hooks/            ← Custom React hooks
-        └── lib/              ← Utilities, API client, types
+        ├── ai/                ← AI integration (Genkit + Gemini)
+        ├── app/               ← Pages & Next.js API routes
+        │   ├── dashboard/     ← Stats, charts, AI insights
+        │   ├── sales/         ← POS terminal
+        │   ├── inventory/     ← Product management
+        │   ├── customers/     ← Customer records
+        │   ├── reports/       ← Business reports
+        │   │   ├── coupons/   ← Coupon usage report
+        │   │   └── return-history/ ← Refund history
+        │   ├── settings/      ← Store configuration
+        │   ├── receipt-settings/ ← Receipt customization
+        │   ├── shifts/        ← Shift management
+        │   ├── coupons/       ← Discount code management
+        │   ├── suppliers/     ← Vendor management
+        │   ├── tables/        ← Restaurant floor plan & orders
+        │   ├── kitchen/       ← Kitchen display (KOT queue)
+        │   ├── expenses/      ← Expense tracking
+        │   ├── superadmin/    ← Tenant management dashboard (SuperAdmin only)
+        │   ├── login/         ← Authentication
+        │   └── signup/        ← Account registration
+        ├── components/        ← Reusable UI components
+        ├── contexts/          ← Global state (auth, theme, language)
+        ├── hooks/             ← Custom React hooks
+        └── lib/               ← Utilities, API client, TypeScript types
 ```
 
 ---
 
-## 3. Backend
+## 3. Backend — Architecture & Implementation
 
 ### `index.js` — Server Entry Point
 
-Yeh poore backend ka starting point hai.
-
-- Port **5001** par server start karta hai
-- CORS setup karta hai (frontend ko allow karta hai)
-- Rate limiting lagata hai:
+- Port **5001** par server initialize hota hai
+- CORS configuration frontend origin ke liye
+- Rate limiting:
   - General API: **500 requests / 15 minutes**
-  - Auth (login): **50 requests / 15 minutes** (brute force se bachao)
-- Images ke liye **10MB** upload limit
-- Saare 13 route modules yahan register hote hain
-- Graceful shutdown handle karta hai
+  - Auth endpoints: **50 requests / 15 minutes** (brute-force protection)
+- File upload limit: **10MB**
+- Tamam route modules yahan register hote hain
+- Graceful shutdown support
 
 ---
 
 ### `db.js` — Database Connection
 
-- MySQL ke saath **connection pool** banata hai (max 10 connections)
-- Promise-based API use karta hai (async/await support)
-- Server start hone par connection test karta hai
-- Agar DB connect na ho to error show karta hai
+- MySQL ke saath **connection pool** (max 10 connections)
+- Promise-based async/await API
+- Server startup par connection verification
+- Connection failure par descriptive error logging
 
 ---
 
-### Middleware (3 files)
+### Middleware
 
-#### `authMiddleware.js`
-- Har protected route par JWT token check karta hai
-- Token `Authorization: Bearer <token>` format mein aana chahiye
-- Token expire ho jaye to `401 Unauthorized` return karta hai
-- Valid token se `req.user` mein user info deta hai
+| File | Responsibility |
+|------|----------------|
+| `authMiddleware.js` | JWT token verify karta hai — `Authorization: Bearer <token>` format required. Invalid/expired token par `401` return hota hai. Valid token se `req.user` populate hota hai — **`id`, `role`, `tenant_id`, `permissions`** (superadmin ke liye `tenant_id` NULL). |
+| `roleMiddleware.js` | Admin-only routes ko cashier access se protect karta hai |
+| `superAdminMiddleware.js` | Sirf **superadmin** ke liye routes guard karta hai (tenants management). Baaki roles ko `403`. |
+| `apiKeyMiddleware.js` | Cron/scheduled jobs ke liye — JWT ke bajaye `x-api-key` header (`CRON_API_KEY`) verify karta hai. Loyalty expiry jaise tasks ke liye. |
+| `errorMiddleware.js` | Saare unhandled errors catch karta hai, consistent error response format return karta hai. Production mein stack trace hide hoti hai. |
 
-#### `roleMiddleware.js`
-- Check karta hai ke user admin hai ya cashier
-- Admin-only routes cashier se protect karta hai
-- Example: coupon create karna, reports dekhna, settings change karna
-
-#### `errorMiddleware.js`
-- Agar koi bhi route mein error aaye to yeh catch karta hai
-- Consistent error format return karta hai
-- Production mein detailed errors hide karta hai
+> **Tenant scoping:** Har tenant-scoped route (`products`, `sales`, `customers`, `settings`, `shifts`, `coupons`, `suppliers`, `tables`, `orders`, `expenses`, etc.) apni queries mein `req.user.tenant_id` use karta hai — taake har user ko sirf apni dukan ka data mile.
 
 ---
 
-### Routes — 13 API Modules
+### API Routes
 
 #### `auth.js` — Authentication
-| Endpoint | Kaam |
-|----------|------|
-| `POST /api/auth/login` | Email + password se login, JWT token milta hai |
-| `POST /api/auth/create-cashier` | Admin naya cashier account banata hai |
 
-- Password **bcrypt** se hash hota hai
-- Failed login attempts track hote hain (lockout feature)
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/auth/login` | Credentials verify karo, JWT token return karo (**token mein `tenant_id` embed hota hai**) |
+| `POST /api/auth/create-cashier` | Admin ke liye naya cashier account create karna (**caller ke `tenant_id` se auto-link**) |
+| `GET /api/auth/accounts` | User accounts list (admin → sirf apne tenant ke; superadmin → sab) |
+| `PUT /api/auth/unlock/:id` | Locked account unlock karna (admin only, tenant-scoped) |
+| `DELETE /api/auth/accounts/:id` | User account delete karna (admin only, tenant-scoped) |
+| `GET /api/auth/profile` | Current logged-in user ka profile (`tenant_id` included) |
+
+- Passwords **bcrypt** ke saath hash hote hain
+- Failed login attempts track hote hain — **3 attempts ke baad 30-minute lockout**
+- Login par tenant ka **status** check hota hai — agar tenant `suspended`/`inactive` ho to login block (superadmin exempt)
+- Jo bhi naya user banta hai woh **automatically caller ke `tenant_id`** se juda hota hai
 
 ---
 
-#### `products.js` — Inventory
-| Endpoint | Kaam |
-|----------|------|
-| `GET /api/products` | Saare products list |
-| `POST /api/products` | Naya product add |
-| `PUT /api/products/:id` | Product update |
-| `DELETE /api/products/:id` | Product delete |
-| `POST /api/products/import` | CSV file se bulk import |
+#### `tenants.js` — Tenant (Shop) Management *(SuperAdmin Only)*
 
-- Category filter support
-- Stock validation (negative stock nahi hogi)
-- CSV import se hazaron products ek baar add ho sakte hain
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/tenants` | Tamam tenants list (user count, sales count, revenue ke saath) |
+| `GET /api/tenants/:id` | Single tenant detail |
+| `POST /api/tenants` | Naya tenant create karna — saath hi uska **settings row + admin user** bhi banta hai |
+| `PUT /api/tenants/:id` | Tenant update (name, status, plan) |
+| `DELETE /api/tenants/:id` | Tenant suspend karna (soft — `status = 'suspended'`; tenant 1 delete nahi hota) |
+
+- Sab endpoints `superAdminMiddleware` se protected
+- `POST` ek transaction mein: tenant + uski default settings (currency PKR, tax, mode) + admin user create karta hai
+- Naya client onboard karne ka **single point** — server par koi manual kaam nahi
+
+---
+
+#### `products.js` — Inventory Management
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/products` | Tamam products retrieve karna (category filter supported) |
+| `GET /api/products/:id` | Single product detail |
+| `POST /api/products` | Naya product create karna |
+| `PUT /api/products/:id` | Product details update karna |
+| `DELETE /api/products/:id` | Product remove karna |
+| `POST /api/products/bulk-import` | CSV file se bulk import |
+| `GET /api/products/barcode/:code` | Barcode se product lookup (POS scanner use) |
+| `GET /api/products/categories/list` | Distinct categories ki list |
+| `GET /api/products/next-sku` | Next available SKU number |
+| `GET /api/products/generate-sku` | Category-based SKU auto-generate |
+| `GET /api/products/:id/variants` | Product ke variants retrieve karna |
+| `POST /api/products/:id/variants` | Product ke variants save/replace karna |
+
+- Negative stock prevention
+- SKU auto-generation (category prefix + sequence number)
+- Barcode field support
+- Product variants (size, color) ke saath alag stock tracking
 
 ---
 
 #### `sales.js` — POS Transactions
-| Endpoint | Kaam |
-|----------|------|
-| `POST /api/sales` | Naya sale create karo |
-| `GET /api/sales` | Sales history |
-| `GET /api/sales/:id` | Single sale detail |
 
-- Payment methods: **Cash, Card, UPI**
-- Coupon code apply hota hai
-- Loyalty points earn/redeem hote hain
-- Tax calculate hoti hai
-- Stock automatically kam hoti hai
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/sales` | Naya sale process karna |
+| `GET /api/sales` | Sales history retrieve karna (admin only) |
+| `GET /api/sales/:id` | Single transaction detail |
+| `GET /api/sales/returns/list` | Tamam returns ki list (admin only) |
+| `GET /api/sales/:id/returns` | Specific sale ke returns |
+| `POST /api/sales/:id/return` | Return process karna (stock restore + points reverse) |
+| `PUT /api/sales/:id/cancel` | Sale cancel karna (admin only) |
+
+- Payment methods: **Cash, Card, UPI** (split payment supported)
+- Coupon code validation aur application
+- Loyalty points earn/redeem (sales transaction ke andar hi hota hai)
+- Tax calculation
+- Stock auto-decrement on sale
 
 ---
 
 #### `dashboard.js` — Analytics
-| Endpoint | Kaam |
-|----------|------|
-| `GET /api/dashboard` | Today ka revenue, sales count, low stock |
-| `GET /api/dashboard/weekly` | 7 din ka data |
-| `GET /api/dashboard/monthly` | Monthly breakdown |
 
-- Real-time data deta hai
-- Top selling categories
-- Recent sales feed
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/dashboard/all` | Today revenue, week revenue, month revenue, sales count, low stock — ek hi call mein |
+| `GET /api/dashboard/stats` | Stats only (today / week / month revenue) |
+| `GET /api/dashboard/recent-sales` | Today ki recent sales feed |
+| `GET /api/dashboard/top-categories` | Top 5 categories by revenue |
+| `GET /api/dashboard/daily-sales` | Last 7 days ka daily breakdown |
 
----
-
-#### `customers.js` — Customer Database
-| Endpoint | Kaam |
-|----------|------|
-| `GET /api/customers` | Saare customers |
-| `POST /api/customers` | Naya customer add |
-| `PUT /api/customers/:id` | Customer update |
-| `DELETE /api/customers/:id` | Customer delete |
-| `GET /api/customers/phone/:phone` | Phone se customer dhundo (POS mein use) |
+- `weekRevenue` aur `monthRevenue` dashboard stats cards mein display hote hain
+- Top-selling categories (donut chart)
+- Recent sales feed (split payment format mein)
 
 ---
 
-#### `reports.js` — Business Reports (Admin Only)
-| Endpoint | Kaam |
-|----------|------|
-| `GET /api/reports/sales` | Sales overview (today/week/month/year) |
-| `GET /api/reports/products` | Top 10 selling products |
-| `GET /api/reports/categories` | Sales by category |
-| `GET /api/reports/profit` | Profit margin calculation |
+#### `customers.js` — Customer Management
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/customers` | Tamam customer records |
+| `GET /api/customers/:id` | Single customer detail |
+| `POST /api/customers` | Naya customer register karna |
+| `PUT /api/customers/:id` | Customer details update karna (admin only) |
+| `DELETE /api/customers/:id` | Customer record remove karna (admin only) |
+
+---
+
+#### `reports.js` — Business Reports *(Admin Only)*
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/reports/all` | Tamam report data ek hi call mein |
+| `GET /api/reports/sales-performance` | Sales overview — today / week / month / year |
+| `GET /api/reports/category-distribution` | Revenue by category |
+| `GET /api/reports/profit-loss` | Profit & loss analysis |
+| `GET /api/reports/tax-summary` | Tax collected ka summary |
+| `GET /api/reports/daily-sales` | Daily sales breakdown |
+| `GET /api/reports/export-detail` | Detailed export data (PDF/Excel ke liye) |
+
+- PDF aur Excel export support
 
 ---
 
 #### `settings.js` — Store Configuration
-| Endpoint | Kaam |
-|----------|------|
-| `GET /api/settings` | Store settings fetch |
-| `PUT /api/settings` | Settings update |
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/settings` | Store settings fetch karna |
+| `PUT /api/settings` | Settings update karna |
+| `GET /api/settings/receipt` | Receipt customization settings |
+| `PUT /api/settings/receipt` | Receipt settings update karna |
+| `POST /api/settings/receipt/logo` | Logo upload karna (PNG/JPG/WEBP, max 2MB) |
+| `DELETE /api/settings/receipt/logo` | Logo remove karna |
 
 - Store name, address, phone, email
-- Tax rate (percentage)
-- Currency symbol
+- Tax rate, currency symbol
 - Low stock alert threshold
-- Theme (dark/light)
+- Dark/Light theme preference
+- Mode toggle: **Retail** ya **Restaurant**
+- Receipt: logo, custom footer, tax line toggle, donation line toggle
 
 ---
 
-#### `menu.js` — POS Menu
-| Endpoint | Kaam |
-|----------|------|
-| `GET /api/menu` | POS ke liye products (with variants) |
+#### `menu.js` — Cashier Product Catalog
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/menu` | POS ke liye optimized product list (variants + stock included) |
 
 - Name ya SKU se search
 - Category filter
-- Stock status include hoti hai
-- Sirf cashier ke liye optimized
 
 ---
 
-#### `shifts.js` — Cashier Shift
-| Endpoint | Kaam |
-|----------|------|
-| `GET /api/shifts/active` | Active shift check |
-| `POST /api/shifts/open` | Shift start karo (opening cash) |
-| `POST /api/shifts/close` | Shift band karo (closing balance) |
-| `POST /api/shifts/cashout` | Shift mein cash nikalo |
+#### `shifts.js` — Cashier Shift Management
 
-- Opening aur closing cash track hoti hai
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/shifts/active` | Current active shift check |
+| `GET /api/shifts` | Tamam shifts history (admin only) |
+| `POST /api/shifts/open` | Shift start (opening cash amount record) |
+| `PUT /api/shifts/close` | Shift close (closing balance verify) |
+| `POST /api/shifts/:id/cash-movement` | Mid-shift cash in/out record |
+| `GET /api/shifts/:id/report` | Specific shift ka detailed report |
+| `DELETE /api/shifts/:id` | Shift record delete karna (admin only) |
+
 - Shift summary: total sales, refunds, cash variance
+- History filters: cashier name, date range, status
 
 ---
 
 #### `coupons.js` — Discount Codes
-| Endpoint | Kaam |
-|----------|------|
-| `GET /api/coupons` | Saare coupons |
-| `POST /api/coupons` | Naya coupon banao (admin) |
-| `PUT /api/coupons/:id` | Coupon update |
-| `DELETE /api/coupons/:id` | Coupon delete |
-| `POST /api/coupons/validate` | Code check karo (POS mein) |
-| `PATCH /api/coupons/:id/toggle` | Active/inactive toggle |
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/coupons` | Tamam coupons list |
+| `POST /api/coupons` | Naya coupon create karna (admin) |
+| `PUT /api/coupons/:id` | Coupon update karna |
+| `DELETE /api/coupons/:id` | Coupon delete karna |
+| `POST /api/coupons/validate` | Code validate karna (POS checkout mein use) |
+| `PATCH /api/coupons/:id/toggle` | Active/inactive status toggle |
 
 - Types: **Flat** (fixed amount) ya **Percentage**
-- Expiry date support
-- Usage limit (e.g. sirf 100 baar use ho)
+- Expiry date aur usage limit support
 
 ---
 
 #### `loyalty.js` — Loyalty Points
-| Endpoint | Kaam |
-|----------|------|
-| `GET /api/loyalty/:phone` | Customer ke points check |
-| `POST /api/loyalty/earn` | Points add karo |
-| `POST /api/loyalty/redeem` | Points use karo |
 
-- **PKR 100 = 1 point** earn hota hai
-- Minimum **100 points** chahiye redeem ke liye
-- Maximum **30%** discount points se mil sakta hai
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/loyalty/lookup` | Phone number se customer ke points check karna (query param: `?phone=`) |
+| `GET /api/loyalty/customer/:customer_id` | Customer ID se points history |
+| `POST /api/loyalty/expire` | 12-month inactive customers ke points expire karna (scheduled cron task — **`x-api-key` header se protected**, JWT nahi) |
+
+> **Note:** Points earn aur redeem `sales.js` transaction ke andar hote hain — alag /earn ya /redeem endpoints nahi hain.
+
+- Earn rate: **PKR 100 = 1 point**
+- Minimum redeem threshold: **100 points**
+- Maximum discount via points: **30%**
+- Return pe points automatically reverse hote hain
 
 ---
 
 #### `suppliers.js` — Vendor Management
-| Endpoint | Kaam |
-|----------|------|
-| `GET /api/suppliers` | Saare suppliers |
-| `POST /api/suppliers` | Naya supplier |
-| `PUT /api/suppliers/:id` | Supplier update |
-| `DELETE /api/suppliers/:id` | Supplier delete |
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/suppliers` | Tamam suppliers list |
+| `POST /api/suppliers` | Naya supplier add karna |
+| `PUT /api/suppliers/:id` | Supplier details update karna |
+| `DELETE /api/suppliers/:id` | Supplier remove karna |
 | `GET /api/suppliers/:id/orders` | Supplier ke purchase orders |
-| `POST /api/suppliers/:id/orders` | Naya purchase order |
+| `POST /api/suppliers/:id/orders` | Naya purchase order create karna |
 
 ---
 
-#### `notifications.js` — Alerts
-| Endpoint | Kaam |
-|----------|------|
-| `GET /api/notifications` | Saari notifications |
-| `PATCH /api/notifications/:id/read` | Mark as read |
-| `DELETE /api/notifications/clear` | Purani clear karo |
+#### `notifications.js` — System Alerts
 
-- Low stock products ki automatic notifications aati hain
-- Bell icon mein unread count dikhta hai
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/notifications` | Tamam notifications retrieve karna |
+| `GET /api/notifications/count` | Unread notifications ka count (bell icon ke liye) |
+| `PATCH /api/notifications/:id/read` | Single notification mark as read |
+| `PATCH /api/notifications/read-all` | Tamam notifications mark as read |
+
+- Low stock threshold cross hone par automatic alert generate hoti hai
+- Header mein bell icon unread count display karta hai
 
 ---
 
-## 4. Frontend
+#### `tables.js` — Restaurant Table Management
 
-### `ai/` — Artificial Intelligence
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/tables` | Floor plan ke saath tamam tables |
+| `POST /api/tables` | Naya table add karna (admin) |
+| `DELETE /api/tables/:id` | Table remove karna (admin) |
+| `PATCH /api/tables/:id/status` | Table status update karna |
 
-#### `genkit.ts`
-- Google Gemini AI ko initialize karta hai (**Gemini 2.0 Flash** model)
-- Genkit framework configure karta hai
+- Table statuses: **Available** (green), **Occupied** (red), **Bill Printed** (orange), **Split** (purple)
+- Tables sections mein organize hoti hain (e.g. Main Hall, VIP)
 
-#### `flows/daily-sales-insights-summary.ts`
-- Ek AI "flow" hai jo sales data leta hai
-- Gemini se human-readable insight generate karta hai
-- Example output: "Aaj ka best seller XYZ tha, revenue 20% upar raha"
+---
+
+#### `orders.js` — Restaurant Orders & KOT
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/orders` | Orders list (filters: table, status) |
+| `GET /api/orders/:id` | Single order detail (items, KOTs, splits) |
+| `POST /api/orders` | Naya order open karna |
+| `PUT /api/orders/:id` | Order notes / guest count update karna |
+| `POST /api/orders/:id/items` | Order mein items add karna |
+| `PATCH /api/orders/:id/items/:itemId` | Single item update ya void karna |
+| `POST /api/orders/:id/kot` | KOT slip generate aur print karna |
+| `POST /api/orders/:id/bill` | Customer bill print karna |
+| `PUT /api/orders/:id/complete` | Payment complete + sales table mein record |
+| `POST /api/orders/:id/split` | Bill split create karna |
+| `PUT /api/orders/:id/split/:splitId/pay` | Split portion mark as paid |
+| `PUT /api/orders/:id/reopen` | Bill print ke baad order reopen karna |
+| `PUT /api/orders/:id/cancel` | Order cancel karna |
+
+- Waiter name aur guest count per order track hota hai
+- KOT number auto-increment
+- Payment complete hone par `sales` table mein record automatically create hota hai — dashboard aur reports mein reflect hota hai
+
+---
+
+#### `kitchen.js` — Kitchen Display
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/kitchen/kots` | Pending KOTs ki list |
+| `PUT /api/kitchen/kots/:id/status` | KOT status update (pending → done) |
+| `PUT /api/kitchen/items/:itemId/status` | Single item status update |
+
+- Kitchen screen par pending orders real-time display hoti hain
+
+---
+
+#### `expenses.js` — Expense Tracking
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/expenses` | Tamam business expenses |
+| `GET /api/expenses/summary` | Category aur month-wise expense breakdown |
+| `POST /api/expenses` | Naya expense record karna |
+| `PUT /api/expenses/:id` | Expense update karna |
+| `DELETE /api/expenses/:id` | Expense delete karna |
+
+- Rent, utilities, salary, etc. categorized tracking
+- Profit reports mein expenses automatically factor in hote hain
+
+---
+
+## 4. Frontend — Architecture & Implementation
+
+### `ai/` — AI Integration
+
+| File | Description |
+|------|-------------|
+| `genkit.ts` | Google Gemini (**Gemini 2.0 Flash**) ko Genkit framework ke saath initialize karta hai |
+| `flows/daily-sales-insights-summary.ts` | Sales data input leta hai, Gemini se human-readable daily insight generate karta hai |
 
 ---
 
 ### `hooks/` — Custom React Hooks
 
-#### `use-mobile.ts`
-- Check karta hai ke screen mobile size hai ya nahi
-- Breakpoint: **768px**
-- Sidebar hide/show karne mein use hota hai
-
-#### `use-toast.ts`
-- Toast notifications manage karta hai (top-right popup messages)
-- Ek waqt mein sirf **1 toast** dikhta hai
-- **3 seconds** mein auto-dismiss
-- Success, error, warning types support
+| Hook | Description |
+|------|-------------|
+| `use-mobile.ts` | Screen width monitor karta hai (breakpoint: 768px) — sidebar responsive behavior ke liye |
+| `use-toast.ts` | Toast notification system — ek waqt mein ek toast, 3 seconds auto-dismiss |
 
 ---
 
-### `lib/` — Utilities
+l
 
-#### `api.ts`
-- Axios ka configured instance hai
-- Base URL: `http://localhost:5001/api`
-- **Automatically JWT token** har request ke saath bhejta hai
-- Agar **401** aaye to user ko login page par redirect karta hai
-- Error logging karta hai console mein
+### `contexts/` — Global State Management
 
-#### `types.ts`
-- TypeScript interfaces define hain:
-  - `User` — id, name, email, role
-  - `Product` — sku, name, price, cost, stock, category
-  - `Customer` — name, email, phone, totalSpent, loyaltyPoints
-  - `Sale` — items, subtotal, discount, tax, total, paymentMethod
-  - `SaleItem` — productId, quantity, pricePerUnit, total
-
-#### `utils.ts`
-- Ek function hai: `cn()`
-- Tailwind CSS classes ko merge karta hai (conflicts resolve karta hai)
-- Example: `cn("px-4", condition && "text-red-500")`
-
-#### `translations.ts`
-- **230+ UI strings** English aur Urdu mein
-- Har label, button, message dono languages mein hai
-- Language switch hone par poora UI translate hota hai
-
-#### `placeholder-images.ts`
-- Demo ke liye sample product images ka data
+| Context | Description |
+|---------|-------------|
+| `auth-context.tsx` | Login state manage karta hai — token localStorage mein, protected route enforcement |
+| `language-context.tsx` | English/Urdu toggle — `t("key")` function se translations, Urdu mein RTL direction |
+| `theme-context.tsx` | Dark/Light mode — localStorage persist, system preference detection |
 
 ---
 
-### `contexts/` — Global State
+### `components/` — UI Component Library
 
-#### `auth-context.tsx`
-- Poori app mein user ka login state manage karta hai
-- Token **localStorage** mein save hota hai
-- Login/logout functions provide karta hai
-- Protected routes check karta hai
-- Public routes (login, signup) ko bypass karta hai
+#### `ui/` — Base Components *(shadcn/ui + Radix UI)*
 
-#### `language-context.tsx`
-- English aur Urdu ke beech toggle
-- Urdu ke liye **RTL** (right-to-left) direction set karta hai
-- `t("key")` function se translations milti hain
-
-#### `theme-context.tsx`
-- Dark aur Light mode toggle
-- Preference **localStorage** mein save hoti hai
-- System preference bhi detect karta hai
-- `<html>` tag par `dark` class add/remove karta hai
-
----
-
-### `components/` — UI Components
-
-#### `ui/` (40+ components)
-Yeh sab **shadcn/ui + Radix UI** ke components hain:
-
-| Component | Kaam |
-|-----------|------|
-| `button.tsx` | Buttons (primary, outline, ghost, destructive) |
-| `input.tsx` | Text/number inputs (12-digit limit bhi yahan hai) |
-| `dialog.tsx` | Modal popups |
+| Component | Description |
+|-----------|-------------|
+| `button.tsx` | Primary, outline, ghost, destructive variants |
+| `input.tsx` | Text/number inputs — 12-digit global limit enforced |
+| `dialog.tsx` | Modal dialogs |
 | `select.tsx` | Dropdown selects |
 | `table.tsx` | Data tables |
 | `card.tsx` | Content cards |
@@ -390,80 +508,99 @@ Yeh sab **shadcn/ui + Radix UI** ke components hain:
 | `switch.tsx` | Toggle switches |
 | `toast.tsx` | Notification popups |
 | `chart.tsx` | Recharts wrapper |
-| `skeleton.tsx` | Loading placeholders |
-| `separator.tsx` | Divider lines |
+| `skeleton.tsx` | Loading state placeholders |
 
-#### `layout/`
-| File | Kaam |
-|------|------|
-| `dashboard-layout.tsx` | Main app layout — sidebar + header + content area |
-| `app-sidebar.tsx` | Left navigation menu (saare pages ke links) |
-| `notification-bell.tsx` | Header mein bell icon, unread count, dropdown |
+#### `layout/` — App Shell
 
-#### `sales/`
-| File | Kaam |
-|------|------|
-| `payment-dialog.tsx` | Payment method select karo (Cash/Card/UPI), coupon, loyalty points |
-| `receipt-print-dialog.tsx` | Sale ka receipt preview aur print |
+| File | Description |
+|------|-------------|
+| `dashboard-layout.tsx` | Main layout — sidebar + header + content area |
+| `app-sidebar.tsx` | Left navigation menu |
+| `notification-bell.tsx` | Header bell icon — unread count + notification dropdown |
 
-#### `inventory/`
-| File | Kaam |
-|------|------|
-| `product-form-dialog.tsx` | Product add/edit ka form dialog |
+#### `sales/` — POS Components
 
-#### `dashboard/`
-| File | Kaam |
-|------|------|
-| `ai-insights.tsx` | AI se generated daily sales summary card |
-| `DonutChart.tsx` | Category breakdown donut chart |
+| File | Description |
+|------|-------------|
+| `payment-dialog.tsx` | Checkout dialog — payment method (Cash/Card/UPI), coupon, loyalty points, split payment |
+| `receipt-print-dialog.tsx` | Receipt preview aur print — logo, footer, tax toggle apply hote hain |
+
+#### `inventory/` — Product Components
+
+| File | Description |
+|------|-------------|
+| `product-form-dialog.tsx` | Product add/edit form — SKU, barcode, variants, pricing |
+
+#### `dashboard/` — Analytics Components
+
+| File | Description |
+|------|-------------|
+| `ai-insights.tsx` | Gemini-generated daily sales summary card |
+| `DonutChart.tsx` | Category revenue breakdown chart |
 
 #### Root Components
-| File | Kaam |
-|------|------|
-| `protected-route.tsx` | Login check — agar logged in nahi to redirect |
-| `providers.tsx` | Saare contexts ek jagah wrap karta hai |
-| `error-boundary.tsx` | React errors catch karta hai, crash nahi hone deta |
-| `theme-toggle.tsx` | Dark/Light mode ka button |
+
+| File | Description |
+|------|-------------|
+| `protected-route.tsx` | Auth guard — unauthenticated users ko login redirect karta hai |
+| `providers.tsx` | Tamam context providers ko ek jagah wrap karta hai |
+| `error-boundary.tsx` | React runtime errors catch karta hai, application crash prevent karta hai |
+| `theme-toggle.tsx` | Dark/Light mode toggle button |
 
 ---
 
-### `app/` — Pages & API Routes
+### `app/api/` — Next.js Server Routes
 
-#### API Route (Backend ka kaam Next.js mein)
 **`app/api/ai/insights/route.ts`**
-- POST request leta hai (sales data)
-- Genkit AI flow call karta hai
-- 3 baar retry karta hai (503 error pe)
+- Sales data receive karta hai (POST)
+- Genkit AI flow invoke karta hai
+- 503 errors par 3 automatic retries
 - AI-generated insight text return karta hai
 
 ---
 
 ## 5. Database Tables
 
-| Table | Kaam |
-|-------|------|
-| `users` | Admin aur cashier accounts |
-| `products` | Inventory — SKU, price, cost, stock, barcode |
-| `customers` | Customer profiles + loyalty points |
-| `sales` | Har transaction ka record |
-| `sale_items` | Har sale ke andar kaunsa product kitna |
-| `sale_returns` | Refunds tracking |
-| `settings` | Store ka configuration |
-| `shifts` | Cashier shift records |
-| `coupons` | Discount codes |
-| `loyalty` | Points ledger (har customer ke liye) |
-| `suppliers` | Vendor information |
-| `purchase_orders` | Supplier se order records |
-| `notifications` | System alerts (low stock, etc.) |
+> **Multi-tenant note:** In tables mein se zyada tar mein ab ek **`tenant_id`** column hai (`products`, `customers`, `sales`, `settings`, `shifts`, `coupons`, `suppliers`, `restaurant_tables`, `restaurant_orders`, `notifications`, `expenses`, `purchase_orders`). Har query is column se filter hoti hai. `users` mein bhi `tenant_id` hai (superadmin ke liye NULL).
+
+| Table | Description |
+|-------|-------------|
+| `tenants` | **Har dukan (tenant) ka record — name, slug, plan, status** |
+| `users` | SuperAdmin, admin aur cashier accounts (`tenant_id`, `role` includes `superadmin`) |
+| `products` | Inventory — SKU, barcode, price, cost, stock (`tenant_id`) |
+| `customers` | Customer profiles + loyalty point balance (`tenant_id`) |
+| `sales` | Tamam transactions (retail + restaurant) — per-tenant `sale_number` (`tenant_id`) |
+| `sale_items` | Per-transaction line items |
+| `sale_payments` | Split payment breakdown per sale |
+| `sale_returns` | Refund records |
+| `sale_return_items` | Returned items detail |
+| `settings` | Store configuration + receipt customization (per tenant) |
+| `shifts` | Cashier shift records (`tenant_id`) |
+| `coupons` | Discount codes (`tenant_id`) |
+| `coupon_usages` | Coupon redemption records per sale |
+| `loyalty_transactions` | Points ledger per customer (earn / redeem / reverse / expire) |
+| `suppliers` | Vendor information (`tenant_id`) |
+| `purchase_orders` | Supplier restock orders (`tenant_id`, per-tenant PO number) |
+| `notifications` | System alerts (low stock, etc.) (`tenant_id`) |
+| `restaurant_tables` | Floor plan — table names, sections, status (`tenant_id`) |
+| `restaurant_orders` | Active table orders — waiter, guests (`tenant_id`) |
+| `restaurant_order_items` | Per-order line items + notes |
+| `kots` | Kitchen Order Ticket print history |
+| `bill_splits` | Table bill split records |
+| `expenses` | Business expense records (`tenant_id`) |
+
+> **Per-tenant numbering:** `sales.sale_number`, `customers.customer_number`, aur `purchase_orders.po_number` har tenant ke liye **1 se shuru** hote hain. Yeh `utils/tenantSequence.js` ke `nextTenantNumber()` se generate hote hain (`MAX(column)+1 WHERE tenant_id`, transaction + row-lock ke saath) — koi alag counter table nahi.
 
 ---
 
 ## 6. Environment Variables
 
-### Backend (`Backend/.env`)
+### Backend — `Backend/.env`
+
 ```env
 PORT=5001
 JWT_SECRET=elites-pos-secret-key-change-in-production-2024
+CRON_API_KEY=random-secret-for-scheduled-tasks   # loyalty/expire jaise cron jobs ke liye
 DB_HOST=localhost
 DB_USER=root
 DB_PASSWORD=abc12345
@@ -471,7 +608,8 @@ DB_NAME=pos_system
 FRONTEND_URL=http://localhost:9002
 ```
 
-### Frontend (`frontend/.env.local`)
+### Frontend — `frontend/.env.local`
+
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:5001/api
 GOOGLE_GENAI_API_KEY=your-gemini-api-key
@@ -479,71 +617,134 @@ GOOGLE_GENAI_API_KEY=your-gemini-api-key
 
 ---
 
-## 7. Pages / Routes
+## 7. Pages & Routes
 
-| URL | Page | Kaun dekh sakta hai |
-|-----|------|---------------------|
-| `/login` | Login form | Sab (public) |
-| `/signup` | Register | Sab (public) |
-| `/dashboard` | Stats, charts, AI insights | Admin + Cashier |
-| `/sales` | POS terminal — cart, checkout | Admin + Cashier |
-| `/inventory` | Products manage | Admin + Cashier |
-| `/customers` | Customer list | Admin + Cashier |
-| `/reports` | Sales reports, profit | Admin only |
-| `/settings` | Store config | Admin only |
-| `/shifts` | Shift open/close | Admin + Cashier |
-| `/coupons` | Discount codes | Admin only |
-| `/suppliers` | Vendor management | Admin only |
+| URL | Page | Access |
+|-----|------|--------|
+| `/login` | Login | Public |
+| `/signup` | Account Registration | Public |
+| `/superadmin` | Tenant (Shop) Management Dashboard | SuperAdmin only |
+| `/dashboard` | Analytics, Charts, AI Insights | Admin + Cashier |
+| `/sales` | POS Terminal | Admin + Cashier |
+| `/inventory` | Product Management | Admin + Cashier |
+| `/customers` | Customer Records | Admin + Cashier |
+| `/reports` | Sales Reports, Profit Analysis | Admin only |
+| `/reports/coupons` | Coupon Usage Report | Admin only |
+| `/reports/return-history` | Refund History | Admin only |
+| `/settings` | Store Configuration | Admin only |
+| `/receipt-settings` | Receipt Customization | Admin only |
+| `/shifts` | Shift Management | Admin + Cashier |
+| `/coupons` | Discount Code Management | Admin only |
+| `/suppliers` | Vendor Management | Admin only |
+| `/tables` | Restaurant Floor Plan & Orders | Admin + Cashier |
+| `/kitchen` | Kitchen Display (KOT Queue) | Admin + Cashier |
+| `/expenses` | Expense Tracking | Admin only |
 
 ---
 
 ## 8. Default Login
 
+**Default Store admin (tenant 1):**
 ```
 Email:    admin@elites.com
 Password: admin123
 Role:     Admin
 ```
 
+**SuperAdmin (platform owner — tenants manage karta hai):**
+```
+Email:    superadmin@elites.com
+Password: super@123
+Role:     SuperAdmin   (tenant_id = NULL)
+```
+> ⚠️ Production mein dono default passwords zaroor badlein.
+
 ---
 
-## How It All Connects
+## 9. Implemented Features Summary
+
+| Feature | Backend | Frontend |
+|---------|---------|----------|
+| Multi-tenant (isolated data per shop) | ✅ | ✅ |
+| SuperAdmin tenant management | ✅ | ✅ |
+| Per-tenant invoice / customer / PO numbering | ✅ | ✅ |
+| Barcode scan → cart | ✅ | ✅ |
+| Barcode label print | ✅ | ✅ |
+| Sales return / refund | ✅ | ✅ |
+| Shift management + cash out | ✅ | ✅ |
+| Coupon codes (flat / percentage) | ✅ | ✅ |
+| Loyalty points (earn / redeem / expire) | ✅ | ✅ |
+| Supplier + purchase orders | ✅ | ✅ |
+| Product variants (size, color) | ✅ | ✅ |
+| Low stock notifications | ✅ | ✅ |
+| SKU auto-generate | ✅ | ✅ |
+| Reports PDF / Excel export | ✅ | ✅ |
+| Split payment (Cash + Card + Wallet) | ✅ | ✅ |
+| Custom receipt (logo, footer, toggles) | ✅ | ✅ |
+| Table management + KOT | ✅ | ✅ |
+| Bill split (restaurant) | ✅ | ✅ |
+| Kitchen display | ✅ | ✅ |
+| Expense tracking | ✅ | ✅ |
+| Touch screen optimization | — | ✅ |
+| POS keyboard shortcuts (F2 / F4 / Esc) | — | ✅ |
+| AI daily sales insights | — | ✅ |
+| Dark / Light mode | — | ✅ |
+| English / Urdu language toggle | — | ✅ |
+
+---
+
+## 10. Deployment Notes
+
+> Environment variables ke liye Section 6 refer karein.
+
+### System Flow
 
 ```
-User Browser
-    |
-    | (Port 9002)
-    v
+Browser (Port 9002)
+    ↓
 Next.js Frontend
-    |
-    | axios (http://localhost:5001/api)
-    | + JWT token header
-    v
-Express.js Backend
-    |
-    | mysql2
-    v
+    ↓  Axios + JWT Bearer Token
+Express.js Backend (Port 5001)
+    ↓  mysql2
 MySQL Database
-    
+
     +
-    
-Frontend (AI page)
-    |
-    | Next.js API route
-    v
+
+Next.js API Route (/api/ai/insights)
+    ↓
 Google Gemini AI
-    |
-    v
-AI Insight Text
+    ↓
+AI Insight Text → Dashboard
 ```
 
-1. User login karta hai → JWT token milta hai → localStorage mein save
-2. Har request mein token auto-attach hota hai (`api.ts`)
-3. Backend token verify karta hai (`authMiddleware.js`)
-4. Role check hoti hai (`roleMiddleware.js`)
-5. Data MySQL se aata hai
-6. Frontend pe dikhta hai
+**Request lifecycle:**
+1. User login karta hai → JWT token generate hota hai (**`tenant_id` embed**) → localStorage mein save
+2. Har API request mein token automatically attach hota hai (`api.ts`)
+3. Backend `authMiddleware.js` mein token verify hota hai → `req.user.tenant_id` set
+4. Role-based access `roleMiddleware.js` / `superAdminMiddleware.js` enforce karta hai
+5. Query **`WHERE tenant_id = req.user.tenant_id`** se scope hoti hai — user ko sirf apni dukan ka data milta hai
+6. Data MySQL se fetch hota hai aur frontend par display hota hai
+
+> **Multi-tenant deployment:** Detail steps ke liye `DEPLOY-VPS.md` (central server) aur `DEPLOY-LOCAL.md` dekhein. Ek hi app + ek hi database sab tenants ke liye; naya client = SuperAdmin se tenant create.
 
 ---
 
-*Yeh guide Elites POS System ka complete reference hai.*
+### Loyalty Points Expiry — Scheduled Task
+
+Loyalty points 12 months ki inactivity ke baad expire hote hain. Yeh endpoint monthly schedule pe call hona chahiye. Ab yeh **API key** se protected hai (JWT nahi) — taake cron job bina login ke chal sake:
+
+```
+Method:  POST
+URL:     http://localhost:5001/api/loyalty/expire
+Header:  x-api-key: <CRON_API_KEY>
+```
+
+**Windows Task Scheduler setup:**
+- Trigger: Monthly — 1st of every month, 12:00 AM
+- Action: `curl.exe -X POST http://localhost:5001/api/loyalty/expire -H "x-api-key: YOUR_CRON_API_KEY"`
+
+> Linux/VPS par yeh `crontab` se schedule hota hai (dekhein `DEPLOY-VPS.md`).
+
+---
+
+*Elites POS System — Complete Technical Reference*

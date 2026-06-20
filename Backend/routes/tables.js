@@ -24,9 +24,10 @@ router.get('/', checkRole(['admin', 'cashier']), async (req, res) => {
         ON o.table_id = t.id AND o.status IN ('open','billed')
       LEFT JOIN restaurant_order_items oi
         ON oi.order_id = o.id
+      WHERE t.tenant_id = ? AND t.is_deleted = 0
       GROUP BY t.id, o.id
       ORDER BY t.floor_section, t.name
-    `);
+    `, [req.user.tenant_id]);
 
     res.json({ success: true, data: tables });
   } catch (err) {
@@ -38,7 +39,7 @@ router.get('/', checkRole(['admin', 'cashier']), async (req, res) => {
 // GET single table detail
 router.get('/:id', checkRole(['admin', 'cashier']), async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM restaurant_tables WHERE id = ?', [req.params.id]);
+    const [rows] = await db.query('SELECT * FROM restaurant_tables WHERE id = ? AND tenant_id = ? AND is_deleted = 0', [req.params.id, req.user.tenant_id]);
     if (!rows.length) return res.status(404).json({ success: false, message: 'Table not found' });
     res.json({ success: true, data: rows[0] });
   } catch (err) {
@@ -56,10 +57,9 @@ router.post('/', checkRole(['admin']), async (req, res) => {
     const trimmedName = name.trim();
     const trimmedFloor = floor_section.trim() || 'Main';
 
-    // Check duplicate name on same floor
     const [existing] = await db.query(
-      'SELECT id FROM restaurant_tables WHERE name = ? AND floor_section = ?',
-      [trimmedName, trimmedFloor]
+      'SELECT id FROM restaurant_tables WHERE name = ? AND floor_section = ? AND tenant_id = ? AND is_deleted = 0',
+      [trimmedName, trimmedFloor, req.user.tenant_id]
     );
     if (existing.length) {
       return res.status(400).json({
@@ -69,8 +69,8 @@ router.post('/', checkRole(['admin']), async (req, res) => {
     }
 
     const [result] = await db.query(
-      'INSERT INTO restaurant_tables (name, capacity, floor_section) VALUES (?, ?, ?)',
-      [trimmedName, capacity, trimmedFloor]
+      'INSERT INTO restaurant_tables (name, capacity, floor_section, tenant_id) VALUES (?, ?, ?, ?)',
+      [trimmedName, capacity, trimmedFloor, req.user.tenant_id]
     );
 
     res.status(201).json({
@@ -92,8 +92,8 @@ router.put('/:id', checkRole(['admin']), async (req, res) => {
   try {
     const { name, capacity, floor_section } = req.body;
     await db.query(
-      'UPDATE restaurant_tables SET name = ?, capacity = ?, floor_section = ? WHERE id = ?',
-      [name, capacity, floor_section, req.params.id]
+      'UPDATE restaurant_tables SET name = ?, capacity = ?, floor_section = ? WHERE id = ? AND tenant_id = ?',
+      [name, capacity, floor_section, req.params.id, req.user.tenant_id]
     );
     res.json({ success: true, message: 'Table updated' });
   } catch (err) {
@@ -111,7 +111,7 @@ router.put('/:id/status', checkRole(['admin', 'cashier']), async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid status' });
     }
 
-    await db.query('UPDATE restaurant_tables SET status = ? WHERE id = ?', [status, req.params.id]);
+    await db.query('UPDATE restaurant_tables SET status = ? WHERE id = ? AND tenant_id = ?', [status, req.params.id, req.user.tenant_id]);
     res.json({ success: true, message: 'Table status updated' });
   } catch (err) {
     console.error(err);
@@ -119,7 +119,7 @@ router.put('/:id/status', checkRole(['admin', 'cashier']), async (req, res) => {
   }
 });
 
-// DELETE table (admin only, must not have open orders)
+// DELETE table (admin only, must not have open orders) — soft delete, recoverable via /restore
 router.delete('/:id', checkRole(['admin']), async (req, res) => {
   try {
     const [open] = await db.query(
@@ -130,11 +130,42 @@ router.delete('/:id', checkRole(['admin']), async (req, res) => {
       return res.status(400).json({ success: false, message: 'Cannot delete table with open orders' });
     }
 
-    await db.query('DELETE FROM restaurant_tables WHERE id = ?', [req.params.id]);
+    await db.query('UPDATE restaurant_tables SET is_deleted = 1 WHERE id = ? AND tenant_id = ?', [req.params.id, req.user.tenant_id]);
     res.json({ success: true, message: 'Table deleted' });
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: 'Error deleting table' });
+  }
+});
+
+// GET DELETED TABLES (admin only) — recovery list
+router.get('/trash/list', checkRole(['admin']), async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      'SELECT * FROM restaurant_tables WHERE tenant_id = ? AND is_deleted = 1 ORDER BY id DESC',
+      [req.user.tenant_id]
+    );
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Error fetching deleted tables' });
+  }
+});
+
+// RESTORE DELETED TABLE (admin only)
+router.put('/:id/restore', checkRole(['admin']), async (req, res) => {
+  try {
+    const [result] = await db.query(
+      'UPDATE restaurant_tables SET is_deleted = 0 WHERE id = ? AND tenant_id = ? AND is_deleted = 1',
+      [req.params.id, req.user.tenant_id]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Deleted table not found' });
+    }
+    res.json({ success: true, message: 'Table restored successfully' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: 'Error restoring table' });
   }
 });
 

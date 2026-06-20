@@ -608,7 +608,7 @@ export default function SuppliersPage() {
                           const Icon = meta.icon
                           return (
                             <tr key={po.id} className="border-b border-white hover:bg-muted/20 transition-colors">
-                              <td className="p-4 font-mono font-semibold text-primary">PO-{String(po.id).padStart(4, "0")}</td>
+                              <td className="p-4 font-mono font-semibold text-primary">PO-{String(po.po_number ?? po.id).padStart(4, "0")}</td>
                               <td className="p-4 font-medium">{po.supplier_name}</td>
                               <td className="p-4 text-muted-foreground">{po.item_count} item{po.item_count !== 1 ? "s" : ""}</td>
                               <td className="p-4 font-semibold">{fmt(po.total_value)}</td>
@@ -869,7 +869,7 @@ export default function SuppliersPage() {
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
                   <ClipboardList className="w-5 h-5 text-primary" />
-                  PO-{String(viewPO.id).padStart(4, "0")}
+                  PO-{String(viewPO.po_number ?? viewPO.id).padStart(4, "0")}
                   <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ml-2 ${statusMeta[viewPO.status].color}`}>
                     {statusMeta[viewPO.status].label}
                   </span>

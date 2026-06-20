@@ -93,6 +93,8 @@ app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/tables', require('./routes/tables'));
 app.use('/api/orders', require('./routes/orders'));
 app.use('/api/kitchen', require('./routes/kitchen'));
+app.use('/api/expenses', require('./routes/expenses'));
+app.use('/api/tenants', require('./routes/tenants'));
 
 // ===============================
 // ROOT

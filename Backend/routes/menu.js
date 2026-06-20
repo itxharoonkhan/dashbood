@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// 🔐 Middleware
+// Middleware
 const verifyToken = require('../middleware/authMiddleware');
 const checkRole = require('../middleware/roleMiddleware');
 
@@ -18,9 +18,8 @@ router.get('/', checkRole(['admin', 'cashier']), async (req, res) => {
   try {
     const { search = '', category = '' } = req.query;
 
-    // Fetch from products table instead of menu_items
-    let sql = "SELECT id, name, category, selling_price AS price, stock, description, sku, image FROM products WHERE 1=1";
-    let values = [];
+    let sql = "SELECT id, name, category, selling_price AS price, stock, description, sku, image FROM products WHERE tenant_id = ?";
+    let values = [req.user.tenant_id];
 
     if (search) {
       sql += " AND (name LIKE ? OR category LIKE ?)";
@@ -36,7 +35,6 @@ router.get('/', checkRole(['admin', 'cashier']), async (req, res) => {
 
     const [rows] = await db.query(sql, values);
 
-    // Attach variants to each product
     const productIds = rows.map(r => r.id);
     const variantMap = {};
     if (productIds.length > 0) {
@@ -78,7 +76,8 @@ router.get('/', checkRole(['admin', 'cashier']), async (req, res) => {
 router.get('/categories', checkRole(['admin', 'cashier']), async (req, res) => {
   try {
     const [rows] = await db.query(
-      "SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND category != ''"
+      "SELECT DISTINCT category FROM products WHERE tenant_id = ? AND category IS NOT NULL AND category != ''",
+      [req.user.tenant_id]
     );
 
     res.json({

@@ -5,7 +5,7 @@ const fs = require('fs');
 const multer = require('multer');
 const db = require('../db');
 
-// 🔐 Middleware
+// Middleware
 const verifyToken = require('../middleware/authMiddleware');
 const checkRole = require('../middleware/roleMiddleware');
 
@@ -43,7 +43,7 @@ const logoUpload = multer({
 // ===============================
 router.get('/', verifyToken, checkRole(['admin', 'cashier']), async (req, res) => {
   try {
-    const [rows] = await db.query("SELECT * FROM settings WHERE id = 1");
+    const [rows] = await db.query("SELECT * FROM settings WHERE tenant_id = ?", [req.user.tenant_id]);
 
     res.json({
       success: true,
@@ -66,7 +66,6 @@ router.put('/', verifyToken, checkRole(['admin']), async (req, res) => {
   try {
     const updates = req.body;
 
-    // ✅ Build dynamic update query
     const fields = [];
     const values = [];
     const allowedFields = ['store_name', 'store_address', 'store_phone', 'store_email', 'store_gstin', 'currency', 'tax_rate', 'items_per_page', 'theme', 'invoice_prefix', 'low_stock_alert', 'mode'];
@@ -85,10 +84,10 @@ router.put('/', verifyToken, checkRole(['admin']), async (req, res) => {
       });
     }
 
-    values.push(1);
+    values.push(req.user.tenant_id);
 
     const [result] = await db.query(
-      `UPDATE settings SET ${fields.join(', ')} WHERE id=?`,
+      `UPDATE settings SET ${fields.join(', ')} WHERE tenant_id = ?`,
       values
     );
 
@@ -99,9 +98,9 @@ router.put('/', verifyToken, checkRole(['admin']), async (req, res) => {
       });
     }
 
-    // ✅ Fetch updated settings
     const [updatedRows] = await db.query(
-      "SELECT * FROM settings WHERE id = 1"
+      "SELECT * FROM settings WHERE tenant_id = ?",
+      [req.user.tenant_id]
     );
 
     res.json({
@@ -125,15 +124,15 @@ router.put('/', verifyToken, checkRole(['admin']), async (req, res) => {
 router.get('/store', verifyToken, checkRole(['admin', 'cashier']), async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT 
+      SELECT
         store_name,
         store_address,
         store_phone,
         store_email,
         store_gstin
       FROM settings
-      WHERE id = 1
-    `);
+      WHERE tenant_id = ?
+    `, [req.user.tenant_id]);
 
     res.json({
       success: true,
@@ -163,19 +162,20 @@ router.put('/store', verifyToken, checkRole(['admin']), async (req, res) => {
     } = req.body;
 
     await db.query(`
-      UPDATE settings SET 
-        store_name = ?, 
-        store_address = ?, 
-        store_phone = ?, 
-        store_email = ?, 
+      UPDATE settings SET
+        store_name = ?,
+        store_address = ?,
+        store_phone = ?,
+        store_email = ?,
         store_gstin = ?
-      WHERE id = 1
+      WHERE tenant_id = ?
     `, [
       store_name,
       store_address,
       store_phone,
       store_email,
-      store_gstin
+      store_gstin,
+      req.user.tenant_id
     ]);
 
     res.json({
@@ -199,8 +199,8 @@ router.get('/receipt', verifyToken, checkRole(['admin', 'cashier']), async (req,
   try {
     const [rows] = await db.query(`
       SELECT receipt_logo, receipt_footer_message, receipt_show_tax, receipt_show_donation
-      FROM settings WHERE id = 1
-    `);
+      FROM settings WHERE tenant_id = ?
+    `, [req.user.tenant_id]);
     res.json({ success: true, data: rows[0] || {} });
   } catch (err) {
     console.error(err);
@@ -227,18 +227,19 @@ router.put('/receipt', verifyToken, checkRole(['admin']), async (req, res) => {
         receipt_footer_message = ?,
         receipt_show_tax       = ?,
         receipt_show_donation  = ?
-       WHERE id = 1`,
+       WHERE tenant_id = ?`,
       [
         receipt_footer_message ?? '',
         receipt_show_tax ? 1 : 0,
         receipt_show_donation ? 1 : 0,
+        req.user.tenant_id
       ]
     );
 
     const [updated] = await db.query(`
       SELECT receipt_logo, receipt_footer_message, receipt_show_tax, receipt_show_donation
-      FROM settings WHERE id = 1
-    `);
+      FROM settings WHERE tenant_id = ?
+    `, [req.user.tenant_id]);
 
     res.json({
       success: true,
@@ -280,7 +281,7 @@ router.post(
       }
 
       // Remove old logo file if present
-      const [rows] = await db.query('SELECT receipt_logo FROM settings WHERE id = 1');
+      const [rows] = await db.query('SELECT receipt_logo FROM settings WHERE tenant_id = ?', [req.user.tenant_id]);
       const oldLogo = rows[0]?.receipt_logo;
       if (oldLogo) {
         const oldPath = path.join(__dirname, '..', oldLogo.replace(/^\//, ''));
@@ -288,7 +289,7 @@ router.post(
       }
 
       const logoUrl = `/uploads/receipt/${req.file.filename}`;
-      await db.query('UPDATE settings SET receipt_logo = ? WHERE id = 1', [logoUrl]);
+      await db.query('UPDATE settings SET receipt_logo = ? WHERE tenant_id = ?', [logoUrl, req.user.tenant_id]);
 
       res.json({
         success: true,
@@ -307,14 +308,14 @@ router.post(
 // ===============================
 router.delete('/receipt/logo', verifyToken, checkRole(['admin']), async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT receipt_logo FROM settings WHERE id = 1');
+    const [rows] = await db.query('SELECT receipt_logo FROM settings WHERE tenant_id = ?', [req.user.tenant_id]);
     const oldLogo = rows[0]?.receipt_logo;
     if (oldLogo) {
       const filePath = path.join(__dirname, '..', oldLogo.replace(/^\//, ''));
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     }
 
-    await db.query('UPDATE settings SET receipt_logo = NULL WHERE id = 1');
+    await db.query('UPDATE settings SET receipt_logo = NULL WHERE tenant_id = ?', [req.user.tenant_id]);
 
     res.json({ success: true, message: 'Logo removed successfully' });
   } catch (err) {

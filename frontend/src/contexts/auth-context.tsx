@@ -6,7 +6,7 @@ import { useRouter, usePathname } from "next/navigation"
 interface User {
   id: string
   name: string
-  role: "admin" | "cashier"
+  role: "admin" | "cashier" | "superadmin"
   permissions?: string[]
 }
 
@@ -43,7 +43,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser({
           id: userId,
           name: userName,
-          role: role as "admin" | "cashier",
+          role: role as "admin" | "cashier" | "superadmin",
           permissions: permissions ? JSON.parse(permissions) : []
         })
       }
@@ -67,7 +67,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     } else if (user && (pathname === "/" || pathname === "/login")) {
       // Logged in, redirect from landing or login page
-      if (user.role === 'admin') {
+      if (user.role === 'superadmin') {
+        router.replace("/superadmin")
+      } else if (user.role === 'admin') {
         router.replace("/dashboard")
       } else {
         const hasSales = user.permissions?.includes('sales')

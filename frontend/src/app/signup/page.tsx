@@ -44,7 +44,10 @@ export default function SignupPage() {
     { label: "One symbol (!@#$%^&*)", test: (p: string) => /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(p) },
   ]
 
-  const isEmailValid = (email: string) => /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)
+  const isEmailValid = (email: string) => {
+    const validTLDs = /\.(com|net|org|edu|gov|pk|co|io|info|biz|me|us|uk|ae|sa|store|shop|online|app|dev)(\.[a-z]{2})?$/i
+    return /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email) && validTLDs.test(email)
+  }
 
   const handleChange = (field: string, value: any) => {
     setFormData(prev => ({ ...prev, [field]: value }))
@@ -135,7 +138,6 @@ export default function SignupPage() {
         })
       }
     } catch (error: any) {
-      console.error('Signup error:', error)
       toast({
         title: "Error",
         description: error.response?.data?.message || 'Failed to create account. Please try again.',
@@ -189,7 +191,7 @@ export default function SignupPage() {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="admin@elites.com"
+                  placeholder="your@email.com"
                   className="pl-10"
                   value={formData.email}
                   onChange={(e) => handleChange("email", e.target.value)}

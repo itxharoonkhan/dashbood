@@ -73,6 +73,7 @@ interface PaymentDialogProps {
     loyaltyPointsRedeemed?: number
     splitPayments?: { method: string; amount: number }[]
     paymentMethod?: string
+    amountPaid?: number
   }) => void
   onPaymentMethodChange?: (method: string) => void
 }
@@ -273,6 +274,9 @@ export function PaymentDialog({
     const finalName           = customerName.trim()
     const finalPhone          = customerPhone.trim()
     const finalPointsRedeemed = usePoints ? pointsToUse : 0
+    const finalAmountPaid     = isSplitMode
+      ? splitRows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
+      : paymentMethod === 'cash' ? parseFloat(cashReceived || '0') : 0
 
     setTimeout(() => {
       setIsProcessing(false)
@@ -286,6 +290,7 @@ export function PaymentDialog({
           loyaltyPointsRedeemed: finalPointsRedeemed,
           splitPayments: finalSplitPayments,
           paymentMethod: resolvedMethod,
+          amountPaid: finalAmountPaid,
         })
         setTimeout(() => {
           onOpenChange(false)
@@ -363,7 +368,8 @@ export function PaymentDialog({
                       id="customerName"
                       placeholder="Required"
                       value={customerName}
-                      onChange={e => setCustomerName(e.target.value)}
+                      onChange={e => setCustomerName(e.target.value.slice(0, 15))}
+                      maxLength={15}
                       className="h-9"
                     />
                   </div>

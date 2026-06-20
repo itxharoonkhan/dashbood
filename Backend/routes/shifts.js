@@ -16,9 +16,9 @@ router.get('/active', verifyToken, checkRole(['admin', 'cashier']), async (req, 
       `SELECT s.*, u.name AS cashier_name
        FROM shifts s
        JOIN users u ON s.cashier_id = u.id
-       WHERE s.cashier_id = ? AND s.status = 'open'
+       WHERE s.cashier_id = ? AND s.status = 'open' AND s.tenant_id = ?
        LIMIT 1`,
-      [req.user.id]
+      [req.user.id, req.user.tenant_id]
     );
 
     if (rows.length === 0) {
@@ -34,7 +34,7 @@ router.get('/active', verifyToken, checkRole(['admin', 'cashier']), async (req, 
       }
     });
   } catch (err) {
-    console.error('❌ Active shift error:', err);
+    console.error('Active shift error:', err);
     res.status(500).json({ success: false, message: 'Failed to fetch active shift' });
   }
 });
@@ -56,8 +56,9 @@ router.get('/', verifyToken, checkRole(['admin']), async (req, res) => {
         ) AS transaction_count
       FROM shifts s
       JOIN users u ON s.cashier_id = u.id
+      WHERE s.tenant_id = ? AND s.is_deleted = 0
       ORDER BY s.start_time DESC
-    `);
+    `, [req.user.tenant_id]);
 
     const data = rows.map(row => ({
       ...row,
@@ -71,7 +72,7 @@ router.get('/', verifyToken, checkRole(['admin']), async (req, res) => {
 
     res.json({ success: true, data });
   } catch (err) {
-    console.error('❌ Shifts list error:', err);
+    console.error('Shifts list error:', err);
     res.status(500).json({ success: false, message: 'Failed to fetch shifts' });
   }
 });
@@ -92,8 +93,8 @@ router.post('/open', verifyToken, checkRole(['admin', 'cashier']), async (req, r
     }
 
     const [existing] = await db.query(
-      "SELECT id FROM shifts WHERE cashier_id = ? AND status = 'open'",
-      [req.user.id]
+      "SELECT id FROM shifts WHERE cashier_id = ? AND status = 'open' AND tenant_id = ?",
+      [req.user.id, req.user.tenant_id]
     );
 
     if (existing.length > 0) {
@@ -103,8 +104,8 @@ router.post('/open', verifyToken, checkRole(['admin', 'cashier']), async (req, r
     const openingCashPaise = toPaise(opening_cash);
 
     const [result] = await db.query(
-      "INSERT INTO shifts (cashier_id, opening_cash, start_time, status) VALUES (?, ?, NOW(), 'open')",
-      [req.user.id, openingCashPaise]
+      "INSERT INTO shifts (cashier_id, opening_cash, start_time, status, tenant_id) VALUES (?, ?, NOW(), 'open', ?)",
+      [req.user.id, openingCashPaise, req.user.tenant_id]
     );
 
     const [newShift] = await db.query(
@@ -122,7 +123,7 @@ router.post('/open', verifyToken, checkRole(['admin', 'cashier']), async (req, r
       }
     });
   } catch (err) {
-    console.error('❌ Open shift error:', err);
+    console.error('Open shift error:', err);
     res.status(500).json({ success: false, message: 'Failed to open shift' });
   }
 });
@@ -143,8 +144,8 @@ router.put('/close', verifyToken, checkRole(['admin', 'cashier']), async (req, r
     }
 
     const [shifts] = await db.query(
-      "SELECT * FROM shifts WHERE cashier_id = ? AND status = 'open' LIMIT 1",
-      [req.user.id]
+      "SELECT * FROM shifts WHERE cashier_id = ? AND status = 'open' AND tenant_id = ? LIMIT 1",
+      [req.user.id, req.user.tenant_id]
     );
 
     if (shifts.length === 0) {
@@ -161,7 +162,6 @@ router.put('/close', verifyToken, checkRole(['admin', 'cashier']), async (req, r
     const totalSalesRupees = parseFloat(salesRows[0].total_sales) || 0;
     const totalSalesPaise = toPaise(totalSalesRupees);
 
-    // Cash outs subtract from expected
     const [movRows] = await db.query(
       "SELECT COALESCE(SUM(amount), 0) AS total_out FROM shift_cash_movements WHERE shift_id = ? AND type = 'cash_out'",
       [shift.id]
@@ -203,7 +203,7 @@ router.put('/close', verifyToken, checkRole(['admin', 'cashier']), async (req, r
       }
     });
   } catch (err) {
-    console.error('❌ Close shift error:', err);
+    console.error('Close shift error:', err);
     res.status(500).json({ success: false, message: 'Failed to close shift' });
   }
 });
@@ -215,12 +215,12 @@ router.get('/:id/report', verifyToken, checkRole(['admin', 'cashier']), async (r
   try {
     const { id } = req.params;
 
-    const isAdmin = req.user.role === 'admin';
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'superadmin';
     const [shifts] = await db.query(
       `SELECT s.*, u.name AS cashier_name FROM shifts s
        JOIN users u ON s.cashier_id = u.id
-       WHERE s.id = ?${isAdmin ? '' : ' AND s.cashier_id = ?'}`,
-      isAdmin ? [id] : [id, req.user.id]
+       WHERE s.id = ? AND s.tenant_id = ? AND s.is_deleted = 0${isAdmin ? '' : ' AND s.cashier_id = ?'}`,
+      isAdmin ? [id, req.user.tenant_id] : [id, req.user.tenant_id, req.user.id]
     );
 
     if (shifts.length === 0) {
@@ -266,7 +266,7 @@ router.get('/:id/report', verifyToken, checkRole(['admin', 'cashier']), async (r
       }
     });
   } catch (err) {
-    console.error('❌ Shift report error:', err);
+    console.error('Shift report error:', err);
     res.status(500).json({ success: false, message: 'Failed to fetch shift report' });
   }
 });
@@ -286,11 +286,10 @@ router.post('/:id/cash-movement', verifyToken, checkRole(['admin', 'cashier']), 
       return res.status(400).json({ success: false, message: 'Valid amount required' });
     }
 
-    const [rows] = await db.query('SELECT * FROM shifts WHERE id = ?', [id]);
+    const [rows] = await db.query('SELECT * FROM shifts WHERE id = ? AND tenant_id = ?', [id, req.user.tenant_id]);
     if (rows.length === 0) return res.status(404).json({ success: false, message: 'Shift not found' });
     if (rows[0].status !== 'open') return res.status(400).json({ success: false, message: 'Shift is not open' });
 
-    // Calculate current drawer balance before allowing cash_out
     if (type === 'cash_out') {
       const [salesRows] = await db.query(
         "SELECT COALESCE(SUM(final_total), 0) AS total_sales FROM sales WHERE shift_id = ? AND status = 'completed'",
@@ -323,19 +322,19 @@ router.post('/:id/cash-movement', verifyToken, checkRole(['admin', 'cashier']), 
 
     res.json({ success: true, message: `${type === 'cash_out' ? 'Cash Out' : 'Cash In'} recorded` });
   } catch (err) {
-    console.error('❌ Cash movement error:', err);
+    console.error('Cash movement error:', err);
     res.status(500).json({ success: false, message: 'Failed to record cash movement' });
   }
 });
 
 // ===============================
-// DELETE SHIFT (Admin Only — closed shifts)
+// DELETE SHIFT (Admin Only — closed shifts) — soft delete, recoverable via /restore
 // ===============================
 router.delete('/:id', verifyToken, checkRole(['admin']), async (req, res) => {
   try {
     const { id } = req.params;
 
-    const [rows] = await db.query('SELECT * FROM shifts WHERE id = ?', [id]);
+    const [rows] = await db.query('SELECT * FROM shifts WHERE id = ? AND tenant_id = ? AND is_deleted = 0', [id, req.user.tenant_id]);
     if (rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Shift not found' });
     }
@@ -344,14 +343,51 @@ router.delete('/:id', verifyToken, checkRole(['admin']), async (req, res) => {
       return res.status(400).json({ success: false, message: 'Cannot delete an open shift. Close it first.' });
     }
 
-    // Unlink sales from this shift before deleting
-    await db.query('UPDATE sales SET shift_id = NULL WHERE shift_id = ?', [id]);
-    await db.query('DELETE FROM shifts WHERE id = ?', [id]);
+    // Soft delete only — sales.shift_id stays intact so historical reports still link correctly
+    await db.query('UPDATE shifts SET is_deleted = 1 WHERE id = ? AND tenant_id = ?', [id, req.user.tenant_id]);
 
     res.json({ success: true, message: 'Shift deleted successfully' });
   } catch (err) {
-    console.error('❌ Delete shift error:', err);
+    console.error('Delete shift error:', err);
     res.status(500).json({ success: false, message: 'Failed to delete shift' });
+  }
+});
+
+// ===============================
+// GET DELETED SHIFTS (Admin ONLY) — recovery list
+// ===============================
+router.get('/trash/list', verifyToken, checkRole(['admin']), async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT s.*, u.name AS cashier_name FROM shifts s
+       JOIN users u ON s.cashier_id = u.id
+       WHERE s.tenant_id = ? AND s.is_deleted = 1 ORDER BY s.start_time DESC`,
+      [req.user.tenant_id]
+    );
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error('Shifts trash list error:', err);
+    res.status(500).json({ success: false, message: 'Failed to fetch deleted shifts' });
+  }
+});
+
+// ===============================
+// RESTORE DELETED SHIFT (Admin ONLY)
+// ===============================
+router.put('/:id/restore', verifyToken, checkRole(['admin']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [result] = await db.query(
+      'UPDATE shifts SET is_deleted = 0 WHERE id = ? AND tenant_id = ? AND is_deleted = 1',
+      [id, req.user.tenant_id]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Deleted shift not found' });
+    }
+    res.json({ success: true, message: 'Shift restored successfully' });
+  } catch (err) {
+    console.error('Restore shift error:', err);
+    res.status(500).json({ success: false, message: 'Failed to restore shift' });
   }
 });
 

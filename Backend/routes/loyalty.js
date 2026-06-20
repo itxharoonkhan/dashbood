@@ -3,27 +3,27 @@ const router = express.Router();
 const db = require('../db');
 const verifyToken = require('../middleware/authMiddleware');
 const checkRole = require('../middleware/roleMiddleware');
-
-router.use(verifyToken);
+const apiKeyMiddleware = require('../middleware/apiKeyMiddleware');
 
 // ===============================
 // LOOKUP BY PHONE (POS checkout)
 // ===============================
-router.get('/lookup', checkRole(['admin', 'cashier']), async (req, res) => {
+router.get('/lookup', verifyToken, checkRole(['admin', 'cashier']), async (req, res) => {
   try {
     const { phone } = req.query;
     if (!phone) return res.status(400).json({ success: false, message: 'Phone required' });
 
     const [[settings]] = await db.query(
-      'SELECT loyalty_rate, loyalty_min_redeem, loyalty_max_percent FROM settings LIMIT 1'
+      'SELECT loyalty_rate, loyalty_min_redeem, loyalty_max_percent FROM settings WHERE tenant_id = ?',
+      [req.user.tenant_id]
     );
     const min_redeem = parseInt(settings?.loyalty_min_redeem) || 100;
     const max_percent = parseInt(settings?.loyalty_max_percent) || 30;
     const rate = parseFloat(settings?.loyalty_rate) || 100;
 
     const [[customer]] = await db.query(
-      'SELECT id, name, phone, loyalty_points FROM customers WHERE phone = ?',
-      [phone.trim()]
+      'SELECT id, name, phone, loyalty_points FROM customers WHERE phone = ? AND tenant_id = ?',
+      [phone.trim(), req.user.tenant_id]
     );
 
     if (!customer) {
@@ -41,7 +41,7 @@ router.get('/lookup', checkRole(['admin', 'cashier']), async (req, res) => {
       rate
     });
   } catch (err) {
-    console.error('❌ Loyalty lookup error:', err);
+    console.error('Loyalty lookup error:', err);
     res.status(500).json({ success: false, message: 'Failed to lookup loyalty info' });
   }
 });
@@ -49,13 +49,14 @@ router.get('/lookup', checkRole(['admin', 'cashier']), async (req, res) => {
 // ===============================
 // CUSTOMER HISTORY + LIFETIME STATS
 // ===============================
-router.get('/customer/:customer_id', checkRole(['admin', 'cashier']), async (req, res) => {
+router.get('/customer/:customer_id', verifyToken, checkRole(['admin', 'cashier']), async (req, res) => {
   try {
     const { customer_id } = req.params;
 
+    // Verify customer belongs to tenant
     const [[customer]] = await db.query(
-      'SELECT id, name, phone, loyalty_points FROM customers WHERE id = ?',
-      [customer_id]
+      'SELECT id, name, phone, loyalty_points FROM customers WHERE id = ? AND tenant_id = ?',
+      [customer_id, req.user.tenant_id]
     );
     if (!customer) return res.status(404).json({ success: false, message: 'Customer not found' });
 
@@ -68,7 +69,6 @@ router.get('/customer/:customer_id', checkRole(['admin', 'cashier']), async (req
       [customer_id]
     );
 
-    // Lifetime stats from transaction log (source of truth)
     const [[stats]] = await db.query(`
       SELECT
         IFNULL(SUM(CASE WHEN type = 'earn'   THEN points ELSE 0 END), 0) AS lifetime_earned,
@@ -81,16 +81,17 @@ router.get('/customer/:customer_id', checkRole(['admin', 'cashier']), async (req
 
     res.json({ success: true, data: { customer, transactions, stats } });
   } catch (err) {
-    console.error('❌ Loyalty history error:', err);
+    console.error('Loyalty history error:', err);
     res.status(500).json({ success: false, message: 'Failed to fetch loyalty history' });
   }
 });
 
 // ===============================
 // EXPIRE POINTS (12 months inactivity)
-// Run this via a scheduled task / cron
+// Called by Windows Task Scheduler — protected by API key, NOT JWT
+// curl.exe -X POST http://localhost:5001/api/loyalty/expire -H "x-api-key: <CRON_API_KEY>"
 // ===============================
-router.post('/expire', checkRole(['admin']), async (req, res) => {
+router.post('/expire', apiKeyMiddleware, async (req, res) => {
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
@@ -106,7 +107,9 @@ router.post('/expire', checkRole(['admin']), async (req, res) => {
       HAVING last_earn < DATE_SUB(NOW(), INTERVAL 12 MONTH)
     `);
 
-    let expired_count = 0;
+    let customers_affected = 0;
+    let total_points_expired = 0;
+
     for (const cust of toExpire) {
       const pts = cust.loyalty_points;
       await connection.query('UPDATE customers SET loyalty_points = 0 WHERE id = ?', [cust.id]);
@@ -115,14 +118,23 @@ router.post('/expire', checkRole(['admin']), async (req, res) => {
          VALUES (?, NULL, 'expire', ?, 0, ?)`,
         [cust.id, pts, '12 months inactivity — points expired']
       );
-      expired_count++;
+      customers_affected++;
+      total_points_expired += pts;
     }
 
     await connection.commit();
-    res.json({ success: true, message: `${expired_count} customers' points expired` });
+    console.log(`Loyalty expiry run: ${customers_affected} customers, ${total_points_expired} points expired`);
+    res.json({
+      success: true,
+      message: `Loyalty expiry complete`,
+      summary: {
+        customers_affected,
+        total_points_expired
+      }
+    });
   } catch (err) {
     await connection.rollback();
-    console.error('❌ Loyalty expire error:', err);
+    console.error('Loyalty expire error:', err);
     res.status(500).json({ success: false, message: 'Failed to expire points' });
   } finally {
     connection.release();

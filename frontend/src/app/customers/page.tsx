@@ -37,6 +37,7 @@ interface Customer {
   joinedDate: string
   totalOrders: number
   totalSpent: number
+  loyalty_points: number
   status: "active" | "inactive"
 }
 
@@ -71,6 +72,7 @@ export default function CustomersPage() {
         joinedDate: c.created_at || new Date().toISOString(),
         totalOrders: parseInt(c.totalOrders || 0),
         totalSpent: parseFloat(c.totalSpent || 0),
+        loyalty_points: parseInt(c.loyalty_points || 0),
         status: "active" as const,
       }))
       setCustomers(mapped)
@@ -108,6 +110,7 @@ export default function CustomersPage() {
         joinedDate: newCust.data.data.created_at || new Date().toISOString(),
         totalOrders: parseInt(newCust.data.data.totalOrders || 0),
         totalSpent: parseFloat(newCust.data.data.totalSpent || 0),
+        loyalty_points: parseInt(newCust.data.data.loyalty_points || 0),
         status: "active" as const,
       }
       setCustomers(prev => [mapped, ...prev])
@@ -271,9 +274,15 @@ export default function CustomersPage() {
                 {(customer.address || customer.city) && <div className="flex items-center gap-2 text-sm text-muted-foreground"><MapPin className="w-4 h-4" /><span>{[customer.address, customer.city].filter(Boolean).join(", ")}</span></div>}
                 <div className="flex items-center gap-2 text-sm text-muted-foreground"><Calendar className="w-4 h-4" /><span>Joined {new Date(customer.joinedDate).toLocaleDateString()}</span></div>
                 <Separator />
-                <div className="grid grid-cols-2 gap-4 pt-2">
+                <div className="grid grid-cols-3 gap-3 pt-2">
                   <div><p className="text-xs text-muted-foreground">Total Orders</p><p className="text-lg font-bold">{customer.totalOrders}</p></div>
                   <div><p className="text-xs text-muted-foreground">Total Spent</p><p className="text-lg font-bold text-primary">Rs. {customer.totalSpent.toLocaleString()}</p></div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Loyalty Pts</p>
+                    <p className={`text-lg font-bold ${customer.loyalty_points > 0 ? 'text-yellow-500' : 'text-muted-foreground'}`}>
+                      ⭐ {customer.loyalty_points}
+                    </p>
+                  </div>
                 </div>
                 <Separator />
                 <div className="flex gap-2">

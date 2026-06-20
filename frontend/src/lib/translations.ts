@@ -36,6 +36,8 @@ export type TranslationKeys = {
   'dashboard.bestDay': string
   'dashboard.processedBy': string
   'dashboard.minsAgo': string
+  'dashboard.weekRevenue': string
+  'dashboard.monthRevenue': string
 
   // Categories
   'category.all': string
@@ -268,6 +270,8 @@ export const translations: Record<'en' | 'ur', TranslationKeys> = {
     'dashboard.bestDay': 'Best Day',
     'dashboard.processedBy': 'Processed by Cashier Rahul',
     'dashboard.minsAgo': 'mins ago',
+    'dashboard.weekRevenue': 'This Week Revenue',
+    'dashboard.monthRevenue': 'This Month Revenue',
 
     // Categories
     'category.all': '🍽️ All Menu',
@@ -499,6 +503,8 @@ export const translations: Record<'en' | 'ur', TranslationKeys> = {
     'dashboard.bestDay': 'بہترین دن',
     'dashboard.processedBy': 'کیئیر راہول نے پروسیس کیا',
     'dashboard.minsAgo': 'منٹ پہلے',
+    'dashboard.weekRevenue': 'اس ہفتے کی آمدنی',
+    'dashboard.monthRevenue': 'اس مہینے کی آمدنی',
 
     // Categories
     'category.all': '🍽️ تمام مینو',

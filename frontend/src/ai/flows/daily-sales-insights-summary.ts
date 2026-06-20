@@ -25,8 +25,25 @@ export const dailySalesInsightsSummary = ai.defineFlow(
     outputSchema: OutputSchema,
   },
   async (input) => {
+    const prompt = `
+You are a retail business analyst for a POS system. Analyze the following daily sales data and provide a concise 2-3 sentence business insight in English. Be professional, highlight one key positive and one area to improve.
+
+Date: ${input.date}
+Total Revenue: Rs. ${input.totalSalesAmount.toLocaleString()}
+Total Transactions: ${input.numberOfTransactions}
+Average Transaction Value: Rs. ${input.averageTransactionValue.toLocaleString()}
+Top Selling Products: ${input.topSellingProducts.slice(0, 5).join(', ') || 'N/A'}
+Least Selling Products: ${input.leastSellingProducts.slice(0, 3).join(', ') || 'N/A'}
+Total Discounts Applied: Rs. ${input.totalDiscountsApplied.toLocaleString()}
+Payment Methods: ${Object.entries(input.paymentMethodBreakdown).map(([k, v]) => `${k}: ${v}`).join(', ') || 'N/A'}
+New Customers: ${input.newCustomersCount}
+Repeat Customers: ${input.repeatCustomersCount}
+    `.trim();
+
+    const response = await ai.generate(prompt);
+
     return {
-      summary: `On ${input.date}, total sales were Rs. ${input.totalSalesAmount.toLocaleString()} across ${input.numberOfTransactions} transactions. Top products: ${input.topSellingProducts.slice(0, 3).join(', ')}.`,
+      summary: response.text,
     };
   }
 );

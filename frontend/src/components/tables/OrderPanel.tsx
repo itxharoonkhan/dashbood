@@ -579,12 +579,13 @@ export default function OrderPanel({ open, table, onClose }: Props) {
         ...(splitPayload && { payments: splitPayload }),
       })
       const saleId = completeRes.data?.data?.sale_id ?? null
+      const saleNumber = completeRes.data?.data?.sale_number ?? null
       printReceipt({
         storeName,
         logoUrl,
         footerMsg,
         items: cart.map(i => ({ name: i.product_name, quantity: i.quantity, price: i.unit_price, notes: i.notes })),
-        invoiceNumber: saleId ?? orderId,
+        invoiceNumber: saleNumber ? `INV-${String(saleNumber).padStart(6, '0')}` : (saleId ?? orderId),
         tableName: table.name,
         pax,
         waiterName: waiterName || '',

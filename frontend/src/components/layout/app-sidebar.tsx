@@ -10,13 +10,10 @@ import {
   Settings,
   LogOut,
   ChevronRight,
-  Store,
-  Menu,
   Globe,
   UserPlus,
   User,
   Mail,
-  Phone,
   Lock,
   Eye,
   EyeOff,
@@ -27,6 +24,8 @@ import {
   ChefHat,
   UtensilsCrossed,
   RotateCcw,
+  TrendingDown,
+  Building2,
 } from "lucide-react"
 
 import {
@@ -37,10 +36,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarGroupContent,
-  SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
 import { cn } from "@/lib/utils"
@@ -70,14 +65,11 @@ import { useAuth } from "@/contexts/auth-context"
 import { useToast } from "@/hooks/use-toast"
 import api from "@/lib/api"
 
-import { useRouter } from "next/navigation"
-
 export function AppSidebar() {
-  const router = useRouter()
   const pathname = usePathname()
   const { setOpenMobile, state } = useSidebar()
   const isCollapsed = state === "collapsed"
-  const { language, setLanguage, t, isRTL } = useLanguage()
+  const { language, setLanguage, t } = useLanguage()
   const { logout } = useAuth()
   const { toast } = useToast()
   const [userRole, setUserRole] = React.useState<string>("admin")
@@ -112,6 +104,15 @@ export function AppSidebar() {
     setPosMode(mode)
   }, [])
 
+  // React to posMode changes from Settings page (same tab)
+  React.useEffect(() => {
+    const handler = (e: Event) => {
+      setPosMode((e as CustomEvent).detail)
+    }
+    window.addEventListener('posModeChanged', handler)
+    return () => window.removeEventListener('posModeChanged', handler)
+  }, [])
+
   // Create User Dialog State
   const [isCashierOpen, setIsCashierOpen] = React.useState(false)
   const [showPassword, setShowPassword] = React.useState(false)
@@ -134,6 +135,9 @@ export function AppSidebar() {
     { id: "reports", label: "Reports" },
     { id: "coupons", label: "Coupons" },
     { id: "suppliers", label: "Suppliers" },
+    { id: "expenses", label: "Expenses" },
+    { id: "tables", label: "Tables" },
+    { id: "kitchen", label: "Kitchen" },
     { id: "settings", label: "Settings" },
   ]
 
@@ -205,6 +209,13 @@ export function AppSidebar() {
       permission: 'suppliers'
     },
     {
+      title: "Expenses",
+      url: "/expenses",
+      icon: TrendingDown,
+      roles: ['admin', 'cashier'],
+      permission: 'expenses'
+    },
+    {
       title: t('nav.settings'),
       url: "/settings",
       icon: Settings,
@@ -219,11 +230,19 @@ export function AppSidebar() {
       permission: 'settings'
     },
     {
+      title: "Super Admin",
+      url: "/superadmin",
+      icon: Building2,
+      roles: ['superadmin'],
+      permission: 'superadmin',
+      superadminOnly: true,
+    },
+    {
       title: "Tables",
       url: "/tables",
       icon: UtensilsCrossed,
       roles: ['admin', 'cashier'],
-      permission: 'sales',
+      permission: 'tables',
       restaurantOnly: true,
     },
     {
@@ -231,24 +250,31 @@ export function AppSidebar() {
       url: "/kitchen",
       icon: ChefHat,
       roles: ['admin', 'cashier'],
-      permission: 'sales',
+      permission: 'kitchen',
       restaurantOnly: true,
     },
   ]
 
   // Filter items based on user role, permissions, and posMode
+  const userPermissions: string[] = typeof window !== 'undefined'
+    ? JSON.parse(localStorage.getItem('userPermissions') || '[]')
+    : [];
+
   const items = allItems.filter((item: any) => {
+    // Superadmin sees only the Super Admin page
+    if (userRole === 'superadmin') return item.superadminOnly === true;
+
+    // Hide superadmin-only items for everyone else
+    if (item.superadminOnly) return false;
+
     // Hide restaurant-only items when in retail mode
     if (item.restaurantOnly && posMode !== 'restaurant') return false;
 
-    // Admin has access to everything (except mode-gated items above)
-    if (userRole === 'admin') return true;
+    // Admin with NO permissions = full admin → sab pages mile
+    if (userRole === 'admin' && userPermissions.length === 0) return true;
 
-    // Check if role is allowed
+    // Admin ya cashier dono ke liye permissions check karo
     const roleAllowed = item.roles.includes(userRole);
-
-    // Check if user has specific permission for this page
-    const userPermissions = JSON.parse(localStorage.getItem('userPermissions') || '[]');
     const hasPermission = userPermissions.includes(item.permission);
 
     return roleAllowed && hasPermission;
@@ -262,7 +288,10 @@ export function AppSidebar() {
     { label: "One symbol (!@#$%^&*)",      test: (p: string) => /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(p) },
   ]
 
-  const isEmailValid = (email: string) => /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)
+  const isEmailValid = (email: string) => {
+    const validTLDs = /\.(com|net|org|edu|gov|pk|co|io|info|biz|me|us|uk|ae|sa|store|shop|online|app|dev)(\.[a-z]{2})?$/i
+    return /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email) && validTLDs.test(email)
+  }
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -321,7 +350,6 @@ export function AppSidebar() {
         })
       }
     } catch (error: any) {
-      console.error('Create user error:', error)
       toast({
         title: "Error",
         description: error.response?.data?.message || "Failed to create user. Please try again.",
@@ -435,7 +463,7 @@ export function AppSidebar() {
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu>
-          {/* Create User Button - Admin Only */}
+          {/* Create User Button - Admin Only (not superadmin) */}
           {userRole === "admin" && (
             <SidebarMenuItem>
               <SidebarMenuButton

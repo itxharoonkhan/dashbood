@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../db');
 const verifyToken = require('../middleware/authMiddleware');
 const checkRole = require('../middleware/roleMiddleware');
+const { nextTenantNumber } = require('../utils/tenantSequence');
 
 router.use(verifyToken);
 
@@ -27,25 +28,25 @@ router.get('/reports', checkRole(['admin']), async (req, res) => {
         IFNULL(SUM(poi.quantity_received * poi.unit_cost), 0) AS total_received_value,
         SUM(CASE WHEN po.status IN ('draft','sent','partially_received') THEN 1 ELSE 0 END) AS pending_pos
       FROM suppliers s
-      LEFT JOIN purchase_orders po ON po.supplier_id = s.id AND ${dateFilter}
+      LEFT JOIN purchase_orders po ON po.supplier_id = s.id AND po.tenant_id = ? AND ${dateFilter}
       LEFT JOIN purchase_order_items poi ON poi.po_id = po.id
-      WHERE s.is_deleted = 0
+      WHERE s.is_deleted = 0 AND s.tenant_id = ?
       GROUP BY s.id
       ORDER BY total_received_value DESC
-    `, params);
+    `, [req.user.tenant_id, ...params, req.user.tenant_id]);
 
     const [pendingOrders] = await db.query(`
       SELECT
-        po.id, po.created_at, po.expected_date, po.status,
+        po.id, po.po_number, po.created_at, po.expected_date, po.status,
         s.name AS supplier_name,
         IFNULL(SUM(poi.quantity_ordered * poi.unit_cost), 0) AS total_value
       FROM purchase_orders po
       JOIN suppliers s ON s.id = po.supplier_id
       LEFT JOIN purchase_order_items poi ON poi.po_id = po.id
-      WHERE po.status IN ('draft','sent','partially_received')
+      WHERE po.status IN ('draft','sent','partially_received') AND po.tenant_id = ?
       GROUP BY po.id
       ORDER BY po.created_at ASC
-    `);
+    `, [req.user.tenant_id]);
 
     const [topItems] = await db.query(`
       SELECT
@@ -56,15 +57,15 @@ router.get('/reports', checkRole(['admin']), async (req, res) => {
       FROM purchase_order_items poi
       JOIN products p ON p.id = poi.product_id
       JOIN purchase_orders po ON po.id = poi.po_id
-      WHERE ${dateFilter}
+      WHERE po.tenant_id = ? AND ${dateFilter}
       GROUP BY p.id
       ORDER BY total_qty_ordered DESC
       LIMIT 10
-    `, params);
+    `, [req.user.tenant_id, ...params]);
 
     res.json({ success: true, data: { supplierStats, pendingOrders, topItems } });
   } catch (err) {
-    console.error('❌ Supplier reports error:', err);
+    console.error('Supplier reports error:', err);
     res.status(500).json({ success: false, message: 'Failed to fetch supplier reports' });
   }
 });
@@ -75,14 +76,14 @@ router.get('/reports', checkRole(['admin']), async (req, res) => {
 router.get('/purchase-orders', checkRole(['admin']), async (req, res) => {
   try {
     const { supplier_id, status } = req.query;
-    let where = '1=1';
-    const params = [];
+    let where = 'po.tenant_id = ?';
+    const params = [req.user.tenant_id];
     if (supplier_id) { where += ' AND po.supplier_id = ?'; params.push(supplier_id); }
     if (status) { where += ' AND po.status = ?'; params.push(status); }
 
     const [rows] = await db.query(`
       SELECT
-        po.id, po.status, po.expected_date, po.notes, po.created_at,
+        po.id, po.po_number, po.status, po.expected_date, po.notes, po.created_at,
         s.id AS supplier_id, s.name AS supplier_name,
         COUNT(poi.id) AS item_count,
         IFNULL(SUM(poi.quantity_ordered * poi.unit_cost), 0) AS total_value,
@@ -98,7 +99,7 @@ router.get('/purchase-orders', checkRole(['admin']), async (req, res) => {
 
     res.json({ success: true, data: rows });
   } catch (err) {
-    console.error('❌ PO list error:', err);
+    console.error('PO list error:', err);
     res.status(500).json({ success: false, message: 'Failed to fetch purchase orders' });
   }
 });
@@ -115,12 +116,13 @@ router.post('/purchase-orders', checkRole(['admin']), async (req, res) => {
     if (!supplier_id) return res.status(400).json({ success: false, message: 'Supplier is required' });
     if (!items || items.length === 0) return res.status(400).json({ success: false, message: 'At least one item is required' });
 
-    const [sup] = await conn.query('SELECT id FROM suppliers WHERE id = ? AND is_deleted = 0', [supplier_id]);
+    const [sup] = await conn.query('SELECT id FROM suppliers WHERE id = ? AND is_deleted = 0 AND tenant_id = ?', [supplier_id, req.user.tenant_id]);
     if (sup.length === 0) return res.status(404).json({ success: false, message: 'Supplier not found' });
 
+    const po_number = await nextTenantNumber(conn, 'purchase_orders', req.user.tenant_id);
     const [poResult] = await conn.query(
-      'INSERT INTO purchase_orders (supplier_id, notes, expected_date, created_by) VALUES (?, ?, ?, ?)',
-      [supplier_id, notes || null, expected_date || null, req.user.id]
+      'INSERT INTO purchase_orders (po_number, supplier_id, notes, expected_date, created_by, tenant_id) VALUES (?, ?, ?, ?, ?, ?)',
+      [po_number, supplier_id, notes || null, expected_date || null, req.user.id, req.user.tenant_id]
     );
     const poId = poResult.insertId;
 
@@ -143,7 +145,7 @@ router.post('/purchase-orders', checkRole(['admin']), async (req, res) => {
     res.json({ success: true, message: 'Purchase order created', data: po });
   } catch (err) {
     await conn.rollback();
-    console.error('❌ PO create error:', err);
+    console.error('PO create error:', err);
     res.status(500).json({ success: false, message: 'Failed to create purchase order' });
   } finally {
     conn.release();
@@ -160,8 +162,8 @@ router.get('/purchase-orders/:poId', checkRole(['admin']), async (req, res) => {
     const [[po]] = await db.query(`
       SELECT po.*, s.name AS supplier_name, s.phone AS supplier_phone, s.email AS supplier_email
       FROM purchase_orders po JOIN suppliers s ON s.id = po.supplier_id
-      WHERE po.id = ?
-    `, [poId]);
+      WHERE po.id = ? AND po.tenant_id = ?
+    `, [poId, req.user.tenant_id]);
 
     if (!po) return res.status(404).json({ success: false, message: 'Purchase order not found' });
 
@@ -174,7 +176,7 @@ router.get('/purchase-orders/:poId', checkRole(['admin']), async (req, res) => {
 
     res.json({ success: true, data: { ...po, items } });
   } catch (err) {
-    console.error('❌ PO detail error:', err);
+    console.error('PO detail error:', err);
     res.status(500).json({ success: false, message: 'Failed to fetch purchase order' });
   }
 });
@@ -191,13 +193,13 @@ router.patch('/purchase-orders/:poId/status', checkRole(['admin']), async (req, 
       return res.status(400).json({ success: false, message: 'Invalid status' });
     }
 
-    const [[po]] = await db.query('SELECT id FROM purchase_orders WHERE id = ?', [poId]);
+    const [[po]] = await db.query('SELECT id FROM purchase_orders WHERE id = ? AND tenant_id = ?', [poId, req.user.tenant_id]);
     if (!po) return res.status(404).json({ success: false, message: 'Purchase order not found' });
 
     await db.query('UPDATE purchase_orders SET status = ? WHERE id = ?', [status, poId]);
     res.json({ success: true, message: `Status updated to ${status}` });
   } catch (err) {
-    console.error('❌ PO status error:', err);
+    console.error('PO status error:', err);
     res.status(500).json({ success: false, message: 'Failed to update status' });
   }
 });
@@ -210,13 +212,13 @@ router.post('/purchase-orders/:poId/receive', checkRole(['admin']), async (req, 
   try {
     await conn.beginTransaction();
     const { poId } = req.params;
-    const { items } = req.body; // [{ po_item_id, quantity_received }]
+    const { items } = req.body;
 
     if (!items || items.length === 0) {
       return res.status(400).json({ success: false, message: 'No items to receive' });
     }
 
-    const [[po]] = await conn.query('SELECT * FROM purchase_orders WHERE id = ?', [poId]);
+    const [[po]] = await conn.query('SELECT * FROM purchase_orders WHERE id = ? AND tenant_id = ?', [poId, req.user.tenant_id]);
     if (!po) return res.status(404).json({ success: false, message: 'PO not found' });
     if (po.status === 'cancelled') return res.status(400).json({ success: false, message: 'Cannot receive on a cancelled PO' });
 
@@ -238,14 +240,12 @@ router.post('/purchase-orders/:poId/receive', checkRole(['admin']), async (req, 
         [cappedReceived, poItem.id]
       );
 
-      // Increment product stock
       await conn.query(
         'UPDATE products SET stock = stock + ? WHERE id = ?',
         [qty, poItem.product_id]
       );
     }
 
-    // Determine new PO status
     const [allItems] = await conn.query(
       'SELECT quantity_ordered, quantity_received FROM purchase_order_items WHERE po_id = ?',
       [poId]
@@ -260,7 +260,7 @@ router.post('/purchase-orders/:poId/receive', checkRole(['admin']), async (req, 
     res.json({ success: true, message: 'Stock received and inventory updated', status: newStatus });
   } catch (err) {
     await conn.rollback();
-    console.error('❌ Receive stock error:', err);
+    console.error('Receive stock error:', err);
     res.status(500).json({ success: false, message: 'Failed to receive stock' });
   } finally {
     conn.release();
@@ -280,13 +280,13 @@ router.get('/', checkRole(['admin']), async (req, res) => {
       FROM suppliers s
       LEFT JOIN supplier_items si ON si.supplier_id = s.id
       LEFT JOIN purchase_orders po ON po.supplier_id = s.id
-      WHERE s.is_deleted = 0
+      WHERE s.is_deleted = 0 AND s.tenant_id = ?
       GROUP BY s.id
       ORDER BY s.created_at DESC
-    `);
+    `, [req.user.tenant_id]);
     res.json({ success: true, data: rows });
   } catch (err) {
-    console.error('❌ Suppliers list error:', err);
+    console.error('Suppliers list error:', err);
     res.status(500).json({ success: false, message: 'Failed to fetch suppliers' });
   }
 });
@@ -302,14 +302,14 @@ router.post('/', checkRole(['admin']), async (req, res) => {
     }
 
     const [result] = await db.query(
-      'INSERT INTO suppliers (name, phone, email, address, notes, status) VALUES (?, ?, ?, ?, ?, ?)',
-      [name.trim(), phone || null, email || null, address || null, notes || null, status || 'active']
+      'INSERT INTO suppliers (name, phone, email, address, notes, status, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [name.trim(), phone || null, email || null, address || null, notes || null, status || 'active', req.user.tenant_id]
     );
 
     const [[created]] = await db.query('SELECT * FROM suppliers WHERE id = ?', [result.insertId]);
     res.json({ success: true, message: 'Supplier created', data: created });
   } catch (err) {
-    console.error('❌ Supplier create error:', err);
+    console.error('Supplier create error:', err);
     res.status(500).json({ success: false, message: 'Failed to create supplier' });
   }
 });
@@ -329,7 +329,7 @@ router.get('/:id/items', checkRole(['admin']), async (req, res) => {
     `, [id]);
     res.json({ success: true, data: rows });
   } catch (err) {
-    console.error('❌ Supplier items error:', err);
+    console.error('Supplier items error:', err);
     res.status(500).json({ success: false, message: 'Failed to fetch supplier items' });
   }
 });
@@ -363,7 +363,7 @@ router.post('/:id/items', checkRole(['admin']), async (req, res) => {
 
     res.json({ success: true, message: 'Item mapping saved' });
   } catch (err) {
-    console.error('❌ Supplier item map error:', err);
+    console.error('Supplier item map error:', err);
     res.status(500).json({ success: false, message: 'Failed to save item mapping' });
   }
 });
@@ -377,7 +377,7 @@ router.delete('/:id/items/:mapId', checkRole(['admin']), async (req, res) => {
     await db.query('DELETE FROM supplier_items WHERE id = ? AND supplier_id = ?', [mapId, id]);
     res.json({ success: true, message: 'Mapping removed' });
   } catch (err) {
-    console.error('❌ Remove mapping error:', err);
+    console.error('Remove mapping error:', err);
     res.status(500).json({ success: false, message: 'Failed to remove mapping' });
   }
 });
@@ -390,7 +390,7 @@ router.put('/:id', checkRole(['admin']), async (req, res) => {
     const { id } = req.params;
     const { name, phone, email, address, notes, status } = req.body;
 
-    const [[sup]] = await db.query('SELECT id FROM suppliers WHERE id = ? AND is_deleted = 0', [id]);
+    const [[sup]] = await db.query('SELECT id FROM suppliers WHERE id = ? AND is_deleted = 0 AND tenant_id = ?', [id, req.user.tenant_id]);
     if (!sup) return res.status(404).json({ success: false, message: 'Supplier not found' });
 
     if (!name || !name.trim()) {
@@ -398,14 +398,14 @@ router.put('/:id', checkRole(['admin']), async (req, res) => {
     }
 
     await db.query(
-      'UPDATE suppliers SET name = ?, phone = ?, email = ?, address = ?, notes = ?, status = ? WHERE id = ?',
-      [name.trim(), phone || null, email || null, address || null, notes || null, status || 'active', id]
+      'UPDATE suppliers SET name = ?, phone = ?, email = ?, address = ?, notes = ?, status = ? WHERE id = ? AND tenant_id = ?',
+      [name.trim(), phone || null, email || null, address || null, notes || null, status || 'active', id, req.user.tenant_id]
     );
 
     const [[updated]] = await db.query('SELECT * FROM suppliers WHERE id = ?', [id]);
     res.json({ success: true, message: 'Supplier updated', data: updated });
   } catch (err) {
-    console.error('❌ Supplier update error:', err);
+    console.error('Supplier update error:', err);
     res.status(500).json({ success: false, message: 'Failed to update supplier' });
   }
 });
@@ -416,14 +416,14 @@ router.put('/:id', checkRole(['admin']), async (req, res) => {
 router.patch('/:id/toggle', checkRole(['admin']), async (req, res) => {
   try {
     const { id } = req.params;
-    const [[sup]] = await db.query('SELECT status FROM suppliers WHERE id = ? AND is_deleted = 0', [id]);
+    const [[sup]] = await db.query('SELECT status FROM suppliers WHERE id = ? AND is_deleted = 0 AND tenant_id = ?', [id, req.user.tenant_id]);
     if (!sup) return res.status(404).json({ success: false, message: 'Supplier not found' });
 
     const newStatus = sup.status === 'active' ? 'inactive' : 'active';
-    await db.query('UPDATE suppliers SET status = ? WHERE id = ?', [newStatus, id]);
+    await db.query('UPDATE suppliers SET status = ? WHERE id = ? AND tenant_id = ?', [newStatus, id, req.user.tenant_id]);
     res.json({ success: true, message: `Supplier ${newStatus}`, status: newStatus });
   } catch (err) {
-    console.error('❌ Supplier toggle error:', err);
+    console.error('Supplier toggle error:', err);
     res.status(500).json({ success: false, message: 'Failed to toggle supplier status' });
   }
 });
@@ -434,13 +434,13 @@ router.patch('/:id/toggle', checkRole(['admin']), async (req, res) => {
 router.delete('/:id', checkRole(['admin']), async (req, res) => {
   try {
     const { id } = req.params;
-    const [[sup]] = await db.query('SELECT id FROM suppliers WHERE id = ? AND is_deleted = 0', [id]);
+    const [[sup]] = await db.query('SELECT id FROM suppliers WHERE id = ? AND is_deleted = 0 AND tenant_id = ?', [id, req.user.tenant_id]);
     if (!sup) return res.status(404).json({ success: false, message: 'Supplier not found' });
 
-    await db.query('UPDATE suppliers SET is_deleted = 1, status = ? WHERE id = ?', ['inactive', id]);
+    await db.query('UPDATE suppliers SET is_deleted = 1, status = ? WHERE id = ? AND tenant_id = ?', ['inactive', id, req.user.tenant_id]);
     res.json({ success: true, message: 'Supplier deleted' });
   } catch (err) {
-    console.error('❌ Supplier delete error:', err);
+    console.error('Supplier delete error:', err);
     res.status(500).json({ success: false, message: 'Failed to delete supplier' });
   }
 });

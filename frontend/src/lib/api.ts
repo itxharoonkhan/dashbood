@@ -1,4 +1,5 @@
-import axios from 'axios'
+import axios, { AxiosError } from 'axios'
+import { toast } from '@/hooks/use-toast'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api'
 
@@ -18,40 +19,65 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Handle 401 and 403 responses
+/**
+ * Extract a human-readable message from an Axios error.
+ * Prefers the backend's { message } field, then the axios message.
+ */
+export function getApiErrorMessage(error: unknown, fallback = 'Something went wrong. Please try again.'): string {
+  const err = error as AxiosError<{ message?: string; error?: string }>
+  if (err?.response?.data?.message) return err.response.data.message
+  if (err?.response?.data?.error) return err.response.data.error
+  if (err?.code === 'ERR_NETWORK') return 'Cannot reach the server. Check your internet or that the backend is running.'
+  if (err?.message) return err.message
+  return fallback
+}
+
+// Handle errors globally: surface unexpected ones on the UI so nothing fails silently
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  (error: AxiosError<{ message?: string }>) => {
     const status = error.response?.status
-    const responseData = error.response?.data
+    const backendMessage = error.response?.data?.message
+    const onClient = typeof window !== 'undefined'
 
-    // Log detailed error info for debugging
-    const errorMsg = responseData?.message || error.message || 'Unknown error'
-    const isExpectedError = [400, 401, 403, 404, 422].includes(status)
-    
-    if (isExpectedError) {
-      console.warn(`⚠️ API Warning [${status}]: ${errorMsg}`)
-    } else {
-      console.error(`❌ API Error [${status || 'NETWORK'}]: ${errorMsg}`, {
-        url: error.config?.url,
-        method: error.config?.method,
-        requestData: error.config?.data,
-        serverResponse: responseData,
-        errorMessage: error.message
-      })
-    }
-
-    // Only redirect on 401 (unauthorized/token expired)
+    // 401: token expired/invalid -> redirect to login (except on the login page)
     if (status === 401) {
-      // Don't redirect on login page itself
-      if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
+      if (onClient && !window.location.pathname.includes('/login')) {
         localStorage.removeItem('authToken')
         localStorage.removeItem('userRole')
         localStorage.removeItem('userId')
         localStorage.removeItem('userName')
         window.location.href = '/login'
       }
+      return Promise.reject(error)
     }
+
+    // 400/403/404/422 are "expected" — pages show their own specific messages.
+    // Everything else (network errors, 429, 5xx) is unexpected: log it AND show a toast
+    // so the user always sees that something failed, even if the page forgot to handle it.
+    const isExpectedError = [400, 403, 404, 422].includes(status as number)
+    if (!isExpectedError) {
+      console.error(`❌ API Error [${status || 'NETWORK'}]: ${error.message}`)
+
+      if (onClient) {
+        let title = 'Something went wrong'
+        let description = backendMessage || 'Please try again.'
+
+        if (!status) {
+          title = 'Network error'
+          description = 'Cannot reach the server. Check your internet or that the backend is running.'
+        } else if (status === 429) {
+          title = 'Too many requests'
+          description = backendMessage || 'Please slow down and try again in a moment.'
+        } else if (status >= 500) {
+          title = 'Server error'
+          description = backendMessage || 'An unexpected error occurred on the server.'
+        }
+
+        toast({ title, description, variant: 'destructive' })
+      }
+    }
+
     return Promise.reject(error)
   }
 )

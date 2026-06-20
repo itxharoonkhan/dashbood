@@ -32,6 +32,7 @@ export interface PrintReceiptOptions {
   // Payment
   payMethod?: string
   amountPaid?: number
+  finalTotal?: number   // actual charged amount — used for change calculation
   splitPayments?: { method: string; amount: number }[]
 }
 
@@ -59,13 +60,15 @@ export function generateReceiptHTML(opts: PrintReceiptOptions): string {
     loyaltyDiscount = 0,
     payMethod,
     amountPaid = 0,
+    finalTotal,
     splitPayments = [],
   } = opts
 
   const taxAmt      = showTax ? tax : 0
   const donationAmt = showDonation ? donation : 0
-  const total       = parseFloat((subtotal + taxAmt + donationAmt - discount - loyaltyDiscount).toFixed(2))
-  const change      = amountPaid > total ? parseFloat((amountPaid - total).toFixed(2)) : 0
+  const displayTotal = parseFloat((subtotal + taxAmt + donationAmt - discount - loyaltyDiscount).toFixed(2))
+  const total        = finalTotal ?? displayTotal
+  const change       = amountPaid > total ? parseFloat((amountPaid - total).toFixed(2)) : 0
 
   const now     = orderTime || new Date()
   const dateStr = now.toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -169,7 +172,7 @@ export function generateReceiptHTML(opts: PrintReceiptOptions): string {
   ${loyaltyDiscount > 0 ? `<div class="row amber"><span>Loyalty Points:</span><span>-Rs.&nbsp;${loyaltyDiscount.toFixed(2)}</span></div>` : ''}
   ${showDonation  ? `<div class="row purple"><span>Donation:</span><span>Rs.&nbsp;${donationAmt.toFixed(2)}</span></div>` : ''}
   <div class="solid"></div>
-  <div class="total-row"><span>TOTAL</span><span>Rs.&nbsp;${total.toLocaleString()}</span></div>
+  <div class="total-row"><span>TOTAL</span><span>Rs.&nbsp;${(finalTotal ?? displayTotal).toLocaleString()}</span></div>
   <div class="dashed"></div>
 
   ${splitRows}

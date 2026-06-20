@@ -81,9 +81,6 @@
 - Barcode scan karke ya manually type karke enter kar sakte hain
 - Backend API (`POST /products`, `PUT /products/:id`) mein barcode properly save hota hai
 
-### ~~16. Camera-Based Barcode Scanner~~ — Removed
-- Camera button sales page se remove kar diya gaya
-- USB barcode scanner wala input field still available hai
 
 ### ✅ 17. Barcode Label Print
 - Inventory page mein har product row pe 🖨️ (Print Label) button
@@ -128,6 +125,22 @@
 - DB tables: `restaurant_tables`, `restaurant_orders`, `restaurant_order_items`, `kots`, `bill_splits`
 - MySQL column: `ALTER TABLE restaurant_orders ADD COLUMN waiter_name VARCHAR(100) NULL`
 - MySQL column: `ALTER TABLE sales ADD COLUMN table_name VARCHAR(50) NULL`
+
+### ✅ 19. Multi-Tenant SaaS (Multiple Shops, Ek System)
+- Ek hi deployment (ek database + ek backend) par **kai alag dukanein (tenants)** chal sakti hain
+- Har tenant ka data `tenant_id` se **bilkul isolated** — ek dukan ka data dusri ko kabhi nahi dikhta (verified)
+- Tenant **login (JWT) se** identify hota hai — har user ke token mein `tenant_id` hota hai (subdomain ki zaroorat nahi)
+- **3 roles**: SuperAdmin (platform owner, tenants banata hai), Admin (apni dukan chalata hai), Cashier
+- **SuperAdmin dashboard** (`/superadmin`): naye tenants create/manage karo — `GET/POST/PUT/DELETE /api/tenants`
+- Naya tenant banao → uska **settings row + admin user** automatically banta hai (ek transaction mein)
+- Jo bhi user banta hai woh **automatically caller ke tenant** se juda hota hai
+- **Per-tenant numbering**: har tenant ke invoice (`sale_number`), customer (`customer_number`), PO (`po_number`) **1 se shuru** hote hain — `utils/tenantSequence.js`
+- Login par tenant ka **status** check (`suspended`/`inactive` → login block; superadmin exempt)
+- Middleware: `superAdminMiddleware.js` (tenants guard), `apiKeyMiddleware.js` (cron jobs)
+- DB: `tenants` table + zyada tar tables mein `tenant_id` column
+- Migrations: `schema_tenant_migration.sql`, `schema_tenant_numbering_migration.sql`
+- Default SuperAdmin: `superadmin@elites.com` / `super@123`
+- **Verified:** orphan rows = 0, cross-tenant leak (sale↔customer, sale↔cashier, saleitem↔product) = 0 ✅
 
 ---
 
@@ -181,22 +194,13 @@
 
 ---
 
-### 6. Camera-Based Barcode Scanner
-**Kya banana hai:**
-- Phone ya laptop camera se barcode scan ho
-- Sales page pe "Scan with Camera" button
-- `@zxing/library` ya `html5-qrcode` use karni hogi
-
-**Kahan banana hai:**
-- New component: `frontend/src/components/sales/camera-scanner.tsx`
-- `frontend/src/app/sales/page.tsx` — button add karo jo scanner open kare
-
----
-
 ## 📋 Quick Status Table
 
 | Feature | Backend | Frontend | Status |
 |---------|---------|----------|--------|
+| Multi-tenant (isolated data per shop) | ✅ | ✅ | Done |
+| SuperAdmin tenant management | ✅ | ✅ | Done |
+| Per-tenant invoice / customer / PO numbering | ✅ | ✅ | Done |
 | Barcode scan → cart | ✅ | ✅ | Done |
 | Barcode field in product form | ✅ | ✅ | Done |
 | Barcode label print | ✅ | ✅ | Done |
@@ -204,7 +208,7 @@
 | Shift history filters | — | ✅ | Done |
 | POS keyboard shortcuts | — | ✅ | Done |
 | Custom receipt design | ✅ | ✅ | Done |
-| Expense tracking | ❌ | ❌ | **Pending** |
+| Expense tracking | ✅ | ✅ | Done |
 | Touch screen optimization | — | ✅ | Done |
 | Split payment | ✅ | ✅ | Done |
 | Loyalty points | ✅ | ✅ | Done |
@@ -220,7 +224,31 @@
 
 ## 🔮 Future Features (Baad Mein)
 
-### Multiple Branches
+### 1. Daily Database Backup
+- Har raat automatically database ka backup le
+- Backup file local folder ya Google Drive mein save ho
+- Agar kuch ghalat ho jaye toh backup se restore kar sako
+- **Kab banao:** Production deploy karne se pehle zaroori hai
+
+### 2. Multi-Branch Support (ek owner ke kai branches)
+> ℹ️ **Note:** Multi-**tenant** (alag-alag clients, alag data) **ho chuka hai** — Feature #19 dekho.
+> Yeh multi-**branch** us se alag hai: **ek hi owner** ke kai locations, **combined** dashboard ke saath.
+- Ek owner ke 2+ branches — har branch ka alag inventory/sales, lekin owner ko **combined** view
+- **Kab banao:** Jab kisi ek client ke 2+ locations ho jayen
+
+### 3. Offline Mode
+- Internet chali jaye toh bhi POS kaam karta rahe
+- Sales locally save hon, internet aane pe sync ho jaye
+- IndexedDB ya Service Worker use hoga
+- **Kab banao:** Un clients ke liye jahan internet unreliable ho
+
+### 4. WhatsApp Receipt
+- Sale complete hone pe customer ko WhatsApp pe bill bhejo
+- Customer ka phone number POS mein already hota hai
+- Twilio ya WhatsApp Business API use hogi
+- **Kab banao:** Customers ki demand pe — bahut popular feature hai
+
+### Multiple Branches (old note)
 - Alag shop locations ka alag inventory aur sales
 - Admin ko saari branches ka combined view
 
@@ -250,14 +278,16 @@
 - Loyalty points expire hote hain agar customer 12 months tak koi order na kare
 - **Windows Task Scheduler** mein ek monthly task set karo
 - Task yeh API call karega: `POST http://localhost:5001/api/loyalty/expire`
-- Header: `Authorization: Bearer <admin_token>`
+- Header: `x-api-key: <CRON_API_KEY>`  ← (ab API key se, JWT/admin token se nahi)
+- `.env` mein `CRON_API_KEY` set hona chahiye
 - Schedule: Har mahine ki 1 tarikh, raat 12 baje
+- Yeh job **sab tenants** ke liye chalta hai (global cron)
 
 **Task banane ka tarika:**
 1. Task Scheduler kholo → Create Basic Task
 2. Trigger: Monthly → 1st of every month → 12:00 AM
 3. Action: Start a program → `curl.exe`
-4. Arguments: `-X POST http://localhost:5001/api/loyalty/expire -H "Authorization: Bearer YOUR_TOKEN"`
+4. Arguments: `-X POST http://localhost:5001/api/loyalty/expire -H "x-api-key: YOUR_CRON_API_KEY"`
 
 ---
 

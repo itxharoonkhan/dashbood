@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Image from "next/image"
-import { Search, Minus, Plus, Trash2, ShoppingCart, Bell, Settings, LogOut, Printer, ChevronDown, ChevronUp, Globe, ScanLine } from "lucide-react"
+import { Search, Minus, Plus, Trash2, ShoppingCart, Bell, Settings, LogOut, Printer, ChevronDown, ChevronUp, Globe, ScanLine, PauseCircle, Clock, RotateCcw, X } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
@@ -16,6 +16,7 @@ import { useRouter } from "next/navigation"
 import ProtectedRoute from "@/components/protected-route"
 import { PaymentDialog } from "@/components/sales/payment-dialog"
 import { ReceiptPrintDialog } from "@/components/sales/receipt-print-dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import api from "@/lib/api"
 
 interface CartItem {
@@ -57,6 +58,15 @@ interface OrderData {
   couponCode?: string
   loyaltyDiscount?: number
   splitPayments?: { method: string; amount: number }[]
+  amountPaid?: number
+}
+
+interface HeldOrder {
+  id: string
+  cart: CartItem[]
+  cartItems: Record<string, number>
+  heldAt: Date
+  subtotal: number
 }
 
 interface MenuItem {
@@ -104,6 +114,8 @@ export default function POSPage() {
   const searchRef  = React.useRef<HTMLInputElement>(null)
   // Selected cart item for +/- shortcuts
   const [selectedCartId, setSelectedCartId] = React.useState<string | null>(null)
+  const [heldOrders, setHeldOrders] = React.useState<HeldOrder[]>([])
+  const [showHeldPanel, setShowHeldPanel] = React.useState(false)
 
   // Variant selection
   const [variantProduct, setVariantProduct] = React.useState<MenuItem | null>(null)
@@ -500,6 +512,58 @@ export default function POSPage() {
     })
   }
 
+  const holdCurrentCart = () => {
+    if (cart.length === 0) {
+      toast({ title: "Cart Khali Hai", description: "Hold karne ke liye pehle items add karo", variant: "destructive" })
+      return
+    }
+    const heldSubtotal = cart.reduce((s, i) => s + Number(i.price) * i.quantity, 0)
+    setHeldOrders(prev => [...prev, {
+      id: Date.now().toString(),
+      cart: [...cart],
+      cartItems: { ...cartItems },
+      heldAt: new Date(),
+      subtotal: heldSubtotal,
+    }])
+    // Cart clear karo — stock restore mat karo (items reserved hain)
+    setCart([])
+    setCartItems({})
+    setDiscount(0)
+    toast({ title: "Order Hold Pe Rakha!", description: `${cart.length} item(s) hold pe hain — naya customer shuru karo`, duration: 2500 })
+  }
+
+  const recallHeldOrder = (held: HeldOrder) => {
+    if (cart.length > 0) {
+      // Pehle current cart ko bhi hold karo
+      const curSubtotal = cart.reduce((s, i) => s + Number(i.price) * i.quantity, 0)
+      setHeldOrders(prev => prev
+        .filter(h => h.id !== held.id)
+        .concat([{ id: Date.now().toString(), cart: [...cart], cartItems: { ...cartItems }, heldAt: new Date(), subtotal: curSubtotal }])
+      )
+    } else {
+      setHeldOrders(prev => prev.filter(h => h.id !== held.id))
+    }
+    setCart(held.cart)
+    setCartItems(held.cartItems)
+    setDiscount(0)
+    setShowHeldPanel(false)
+    toast({ title: "Order Recall Ho Gaya!", description: `${held.cart.length} item(s) cart mein wapas`, duration: 2000 })
+  }
+
+  const discardHeldOrder = (held: HeldOrder) => {
+    // Stock wapas karo
+    setMenuItems(prev => {
+      const updated = [...prev]
+      held.cart.forEach(cartItem => {
+        const idx = updated.findIndex(m => m.id.toString() === cartItem.id.split('-')[0])
+        if (idx !== -1) updated[idx] = { ...updated[idx], stock: updated[idx].stock + cartItem.quantity }
+      })
+      return updated
+    })
+    setHeldOrders(prev => prev.filter(h => h.id !== held.id))
+    toast({ title: "Order Cancel Kiya", description: "Held order discard ho gaya", duration: 2000 })
+  }
+
   const subtotal = cart.reduce((sum, item) => sum + (Number(item.price) * item.quantity), 0)
   const tax = parseFloat((subtotal * (taxRate / 100)).toFixed(2))
   const donation = 1
@@ -517,7 +581,7 @@ export default function POSPage() {
     setIsPaymentOpen(true)
   }
 
-  const handlePaymentComplete = async (customerData?: { name: string; phone: string; coupon?: AppliedCoupon; loyaltyPointsRedeemed?: number; splitPayments?: { method: string; amount: number }[]; paymentMethod?: string }) => {
+  const handlePaymentComplete = async (customerData?: { name: string; phone: string; coupon?: AppliedCoupon; loyaltyPointsRedeemed?: number; splitPayments?: { method: string; amount: number }[]; paymentMethod?: string; amountPaid?: number }) => {
     if (cart.length === 0) {
       toast({
         title: t('msg.cartEmpty'),
@@ -545,6 +609,7 @@ export default function POSPage() {
         payment_method: isSplit ? 'split' : selectedPaymentMethod,
         ...(isSplit && { payments: customerData!.splitPayments }),
         amount_paid: finalTotal,
+        cash_received: customerData?.amountPaid ?? null,
         discount: 0,
         tax: tax,
         customer_name: customerData?.name,
@@ -555,7 +620,8 @@ export default function POSPage() {
       })
 
       if (response.data.success) {
-        const formattedOrderNumber = `${invoicePrefix}-${String(response.data.sale_id).padStart(6, '0')}`
+        const invoiceSeq = response.data.sale_number ?? response.data.sale_id
+        const formattedOrderNumber = `${invoicePrefix}-${String(invoiceSeq).padStart(6, '0')}`
 
         const couponDiscount = customerData?.coupon?.discount ?? 0
         const loyaltyDiscount = customerData?.loyaltyPointsRedeemed ?? 0
@@ -574,6 +640,7 @@ export default function POSPage() {
           couponCode: customerData?.coupon?.code,
           loyaltyDiscount,
           splitPayments: customerData?.splitPayments,
+          amountPaid: customerData?.amountPaid,
         }
         setSavedOrder(orderData)
 
@@ -782,6 +849,7 @@ export default function POSPage() {
         customerPhone={savedOrder?.customerPhone}
         orderTime={savedOrder?.orderTime}
         splitPayments={savedOrder?.splitPayments}
+        amountPaid={savedOrder?.amountPaid}
       />
 
       {/* Main Content - Optimized for 320px+ */}
@@ -981,6 +1049,16 @@ export default function POSPage() {
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-sm xs:text-base md:text-lg font-semibold text-foreground truncate">{t('cart.title')}</h3>
               <div className="flex gap-1.5 xs:gap-2 flex-shrink-0">
+                {heldOrders.length > 0 && (
+                  <button
+                    onClick={() => setShowHeldPanel(true)}
+                    className="relative flex items-center gap-1 px-2 h-8 rounded-lg bg-amber-500/15 border border-amber-500/40 hover:bg-amber-500/25 transition-colors active:scale-90"
+                    title="Held orders dekho"
+                  >
+                    <PauseCircle className="w-3.5 h-3.5 text-amber-500" />
+                    <span className="text-xs font-bold text-amber-500">{heldOrders.length}</span>
+                  </button>
+                )}
                 <button
                   onClick={clearCart}
                   className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-destructive/20 transition-colors active:scale-90"
@@ -1102,21 +1180,31 @@ export default function POSPage() {
               </button>
             </div>
             {/* Action Buttons */}
-            <div className="grid grid-cols-3 gap-1.5 xs:gap-2 w-full">
+            <div className="flex gap-1.5 xs:gap-2 w-full">
               <Button
                 variant="outline"
-                className="flex items-center justify-center gap-1 text-xs h-10 xs:h-10 active:scale-95 touch-target-sm"
+                className="flex items-center justify-center gap-1 text-xs h-10 px-3 active:scale-95 touch-target-sm shrink-0"
                 onClick={() => setIsPrintDialogOpen(true)}
+                title="Print"
               >
-                <Printer className="w-4 h-4 md:w-4 md:h-4" />
-                <span className="hidden sm:inline">{t('payment.print')}</span>
+                <Printer className="w-4 h-4" />
               </Button>
               <Button
-                className="col-span-2 bg-gradient-to-r from-primary to-secondary hover:from-primary/80 hover:to-secondary/80 text-white font-semibold text-xs md:text-sm h-10 xs:h-10 active:scale-95 touch-target-sm"
+                variant="outline"
+                className="flex items-center justify-center gap-1 text-xs h-10 px-3 active:scale-95 touch-target-sm shrink-0 border-amber-500/50 text-amber-600 hover:bg-amber-500/10 disabled:opacity-40"
+                disabled={cart.length === 0}
+                onClick={holdCurrentCart}
+                title="Hold Order"
+              >
+                <PauseCircle className="w-4 h-4" />
+                <span className="text-xs font-medium">Hold</span>
+              </Button>
+              <Button
+                className="flex-1 bg-gradient-to-r from-primary to-secondary hover:from-primary/80 hover:to-secondary/80 text-white font-semibold text-xs md:text-sm h-10 active:scale-95 touch-target-sm"
                 disabled={cart.length === 0}
                 onClick={handleCheckout}
               >
-                <ShoppingCart className="w-4 h-4 md:w-4 md:h-4 mr-1.5 xs:mr-2" />
+                <ShoppingCart className="w-4 h-4 mr-1.5" />
                 <span className="hidden sm:inline">{t('payment.placeOrder')}</span>
                 <span className="sm:hidden">{t('payment.checkout')}</span>
               </Button>
@@ -1125,6 +1213,72 @@ export default function POSPage() {
         </Card>
       </div>
     </div>
+      {/* ── Held Orders Dialog ── */}
+      <Dialog open={showHeldPanel} onOpenChange={setShowHeldPanel}>
+        <DialogContent className="sm:max-w-[420px] z-[10000]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <PauseCircle className="w-5 h-5 text-amber-500" />
+              Hold Pe Rakhe Orders ({heldOrders.length})
+            </DialogTitle>
+          </DialogHeader>
+          {heldOrders.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">Koi held order nahi hai</p>
+          ) : (
+            <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+              {heldOrders.map((held, idx) => (
+                <div key={held.id} className="rounded-lg border bg-muted/30 p-3">
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div>
+                      <span className="text-sm font-semibold text-foreground">Order #{idx + 1}</span>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <Clock className="w-3 h-3 text-muted-foreground" />
+                        <span className="text-xs text-muted-foreground">
+                          {held.heldAt.toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-sm font-bold text-primary">Rs. {held.subtotal.toFixed(0)}</p>
+                      <p className="text-xs text-muted-foreground">{held.cart.reduce((s, i) => s + i.quantity, 0)} items</p>
+                    </div>
+                  </div>
+                  <div className="text-xs text-muted-foreground mb-3 space-y-0.5">
+                    {held.cart.slice(0, 3).map(item => (
+                      <div key={item.id} className="flex justify-between">
+                        <span className="truncate pr-2">{item.name}{item.variantName ? ` (${item.variantName})` : ''}</span>
+                        <span className="shrink-0">×{item.quantity}</span>
+                      </div>
+                    ))}
+                    {held.cart.length > 3 && (
+                      <p className="text-muted-foreground/70">+{held.cart.length - 3} aur items...</p>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      className="flex-1 h-8 text-xs bg-gradient-to-r from-primary to-secondary hover:from-primary/80 hover:to-secondary/80"
+                      onClick={() => recallHeldOrder(held)}
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 mr-1" />
+                      Recall
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 px-3 text-xs border-destructive/40 text-destructive hover:bg-destructive/10"
+                      onClick={() => discardHeldOrder(held)}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
     </ProtectedRoute>
   )
 }

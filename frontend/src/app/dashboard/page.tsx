@@ -28,6 +28,8 @@ import {
   Receipt,
   Printer,
   Undo2,
+  CalendarDays,
+  CalendarRange,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { AIInsights } from "@/components/dashboard/ai-insights"
@@ -192,12 +194,15 @@ export default function DashboardPage() {
       ? saleDetail.payments.map((p: any) => ({ method: p.method, amount: parseFloat(p.amount) }))
       : undefined
 
+    const cashReceived  = parseFloat(saleData?.cash_received || 0)
+    const finalTotal    = parseFloat(saleData?.final_total || 0)
+
     const html = generateReceiptHTML({
       storeName:      receiptStoreName,
       logoUrl:        receiptLogoUrl || undefined,
       footerMsg:      receiptFooterMsg,
       items:          items.map((i: any) => ({ name: i.product_name, quantity: i.quantity, price: parseFloat(i.price) })),
-      invoiceNumber:  `INV-${String(sale?.id || 0).padStart(6, '0')}`,
+      invoiceNumber:  `INV-${String(sale?.sale_number ?? sale?.id ?? 0).padStart(6, '0')}`,
       orderTime:      sale?.sale_date ? new Date(sale.sale_date) : undefined,
       customerName:   sale?.customer_name || undefined,
       orderType:      'POS',
@@ -208,6 +213,8 @@ export default function DashboardPage() {
       discount,
       loyaltyDiscount,
       payMethod:      saleData?.payment_method || sale?.payment_method || 'cash',
+      amountPaid:     cashReceived,
+      finalTotal:     finalTotal || undefined,
       splitPayments,
     })
     const w = window.open('', '_blank', 'width=360,height=650')
@@ -281,28 +288,42 @@ export default function DashboardPage() {
     {
       title: t('dashboard.totalRevenue'),
       value: `Rs. ${statsData.todayRevenue.toLocaleString()}`,
-      change: "+0%",
+      sub: "Today",
       trend: "up" as const,
       icon: DollarSign,
     },
     {
       title: t('dashboard.salesCount'),
       value: statsData.todaySales.toString(),
-      change: "+0%",
+      sub: "Today",
       trend: "up" as const,
       icon: ShoppingCart,
     },
     {
+      title: t('dashboard.weekRevenue'),
+      value: `Rs. ${statsData.weekRevenue.toLocaleString()}`,
+      sub: "This Week",
+      trend: "up" as const,
+      icon: CalendarDays,
+    },
+    {
+      title: t('dashboard.monthRevenue'),
+      value: `Rs. ${statsData.monthRevenue.toLocaleString()}`,
+      sub: "This Month",
+      trend: "up" as const,
+      icon: CalendarRange,
+    },
+    {
       title: t('dashboard.activeCustomers'),
       value: statsData.totalCustomers.toString(),
-      change: "+0%",
+      sub: "Total",
       trend: "up" as const,
       icon: Users,
     },
     {
       title: t('dashboard.lowStock'),
       value: statsData.lowStock.toString(),
-      change: "-0",
+      sub: "Products",
       trend: "down" as const,
       icon: Package,
     },
@@ -337,28 +358,26 @@ export default function DashboardPage() {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         {displayStats.map((stat) => (
           <Card key={stat.title} className="hover:shadow-md transition-shadow overflow-visible">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-xs sm:text-sm font-medium">{stat.title}</CardTitle>
+              <CardTitle className="text-xs font-medium leading-tight">{stat.title}</CardTitle>
               <stat.icon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
             </CardHeader>
             <CardContent>
-              <div className="text-xl sm:text-2xl font-bold text-foreground">{stat.value}</div>
-              <p className="flex items-center text-xs mt-1 flex-wrap">
+              <div className="text-lg sm:text-xl font-bold text-foreground">{stat.value}</div>
+              <p className="flex items-center text-xs mt-1">
                 {stat.trend === "up" ? (
                   <span className="text-accent flex items-center font-semibold">
                     <ArrowUpRight className="mr-1 h-3 w-3 flex-shrink-0" />
-                    {stat.change}
                   </span>
                 ) : (
                   <span className="text-destructive flex items-center font-semibold">
                     <ArrowDownRight className="mr-1 h-3 w-3 flex-shrink-0" />
-                    {stat.change}
                   </span>
                 )}
-                <span className="text-muted-foreground ml-1 sm:ml-2 hidden sm:inline">from last month</span>
+                <span className="text-muted-foreground">{stat.sub}</span>
               </p>
             </CardContent>
           </Card>
@@ -410,7 +429,7 @@ export default function DashboardPage() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-xs sm:text-sm font-semibold leading-none truncate text-foreground">
-                          Invoice #{sale.id}{sale.table_name ? ` • Table ${sale.table_name}` : ''}
+                          Invoice #{sale.sale_number ?? sale.id}{sale.table_name ? ` • Table ${sale.table_name}` : ''}
                         </p>
                         <p className="text-[10px] sm:text-xs text-muted-foreground truncate mt-0.5">
                           {sale.customer_name || 'Walk-in'} &nbsp;•&nbsp; {new Date(sale.sale_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

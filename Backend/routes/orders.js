@@ -4,6 +4,7 @@ const db = require('../db');
 
 const verifyToken = require('../middleware/authMiddleware');
 const checkRole = require('../middleware/roleMiddleware');
+const { nextTenantNumber } = require('../utils/tenantSequence');
 
 router.use(verifyToken);
 
@@ -21,9 +22,9 @@ router.get('/', checkRole(['admin', 'cashier']), async (req, res) => {
       FROM restaurant_orders o
       JOIN restaurant_tables t ON t.id = o.table_id
       LEFT JOIN restaurant_order_items oi ON oi.order_id = o.id
-      WHERE 1=1
+      WHERE o.tenant_id = ?
     `;
-    const params = [];
+    const params = [req.user.tenant_id];
 
     if (table_id) { sql += ' AND o.table_id = ?'; params.push(table_id); }
     if (status)   { sql += ' AND o.status = ?';   params.push(status);   }
@@ -47,8 +48,8 @@ router.get('/:id', checkRole(['admin', 'cashier']), async (req, res) => {
       SELECT o.*, t.name AS table_name
       FROM restaurant_orders o
       JOIN restaurant_tables t ON t.id = o.table_id
-      WHERE o.id = ?
-    `, [req.params.id]);
+      WHERE o.id = ? AND o.tenant_id = ?
+    `, [req.params.id, req.user.tenant_id]);
 
     if (!orders.length) return res.status(404).json({ success: false, message: 'Order not found' });
 
@@ -85,14 +86,12 @@ router.post('/', checkRole(['admin', 'cashier']), async (req, res) => {
     const { table_id, pax = 1, notes = '', waiter_name = '' } = req.body;
     if (!table_id) return res.status(400).json({ success: false, message: 'table_id is required' });
 
-    // Check table exists
-    const [table] = await db.query('SELECT * FROM restaurant_tables WHERE id = ?', [table_id]);
+    const [table] = await db.query('SELECT * FROM restaurant_tables WHERE id = ? AND tenant_id = ?', [table_id, req.user.tenant_id]);
     if (!table.length) return res.status(404).json({ success: false, message: 'Table not found' });
 
-    // Block if any active order already exists for this table
     const [activeOrders] = await db.query(
-      "SELECT id FROM restaurant_orders WHERE table_id = ? AND status IN ('open','billed')",
-      [table_id]
+      "SELECT id FROM restaurant_orders WHERE table_id = ? AND status IN ('open','billed') AND tenant_id = ?",
+      [table_id, req.user.tenant_id]
     );
     if (activeOrders.length) {
       return res.status(400).json({
@@ -107,11 +106,11 @@ router.post('/', checkRole(['admin', 'cashier']), async (req, res) => {
     }
 
     const [result] = await db.query(
-      'INSERT INTO restaurant_orders (table_id, waiter_id, pax, notes, waiter_name) VALUES (?, ?, ?, ?, ?)',
-      [table_id, req.user?.id || null, pax, notes, waiter_name || null]
+      'INSERT INTO restaurant_orders (table_id, waiter_id, pax, notes, waiter_name, tenant_id) VALUES (?, ?, ?, ?, ?, ?)',
+      [table_id, req.user?.id || null, pax, notes, waiter_name || null, req.user.tenant_id]
     );
 
-    await db.query("UPDATE restaurant_tables SET status = 'occupied' WHERE id = ?", [table_id]);
+    await db.query("UPDATE restaurant_tables SET status = 'occupied' WHERE id = ? AND tenant_id = ?", [table_id, req.user.tenant_id]);
 
     res.status(201).json({
       success: true,
@@ -129,31 +128,28 @@ router.post('/', checkRole(['admin', 'cashier']), async (req, res) => {
 // ===============================
 router.post('/:id/items', checkRole(['admin', 'cashier']), async (req, res) => {
   try {
-    const { items } = req.body; // [{ product_id, quantity, notes }]
+    const { items } = req.body;
     if (!items || !items.length) {
       return res.status(400).json({ success: false, message: 'Items are required' });
     }
 
     const orderId = req.params.id;
 
-    // Verify order exists and is open
     const [orders] = await db.query(
-      "SELECT * FROM restaurant_orders WHERE id = ? AND status = 'open'",
-      [orderId]
+      "SELECT * FROM restaurant_orders WHERE id = ? AND status = 'open' AND tenant_id = ?",
+      [orderId, req.user.tenant_id]
     );
     if (!orders.length) return res.status(404).json({ success: false, message: 'Open order not found' });
 
-    // Get product prices
     const productIds = items.map(i => i.product_id);
     const placeholders = productIds.map(() => '?').join(',');
     const [products] = await db.query(
-      `SELECT id, selling_price FROM products WHERE id IN (${placeholders})`,
-      productIds
+      `SELECT id, selling_price FROM products WHERE id IN (${placeholders}) AND tenant_id = ?`,
+      [...productIds, req.user.tenant_id]
     );
     const priceMap = {};
     products.forEach(p => { priceMap[p.id] = p.selling_price; });
 
-    // Generate KOT first to get its ID
     const kotNumber = `KOT-${orderId}-${Date.now()}`;
     const [kotResult] = await db.query(
       "INSERT INTO kots (order_id, kot_number, status) VALUES (?, ?, 'pending')",
@@ -161,7 +157,6 @@ router.post('/:id/items', checkRole(['admin', 'cashier']), async (req, res) => {
     );
     const kotId = kotResult.insertId;
 
-    // Insert items — link each item to this KOT
     const insertedIds = [];
     for (const item of items) {
       const price = priceMap[item.product_id];
@@ -192,7 +187,7 @@ router.patch('/:id/items/:itemId', checkRole(['admin', 'cashier']), async (req, 
   const itemId  = parseInt(req.params.itemId);
   const { quantity } = req.body;
   try {
-    const [orders] = await db.query('SELECT status FROM restaurant_orders WHERE id = ?', [orderId]);
+    const [orders] = await db.query('SELECT status FROM restaurant_orders WHERE id = ? AND tenant_id = ?', [orderId, req.user.tenant_id]);
     if (!orders.length) return res.status(404).json({ success: false, message: 'Order not found' });
     if (orders[0].status === 'paid') return res.status(400).json({ success: false, message: 'Order already completed' });
 
@@ -218,8 +213,8 @@ router.put('/:id', checkRole(['admin', 'cashier']), async (req, res) => {
   try {
     const { pax, notes } = req.body;
     await db.query(
-      'UPDATE restaurant_orders SET pax = COALESCE(?, pax), notes = COALESCE(?, notes) WHERE id = ?',
-      [pax ?? null, notes ?? null, req.params.id]
+      'UPDATE restaurant_orders SET pax = COALESCE(?, pax), notes = COALESCE(?, notes) WHERE id = ? AND tenant_id = ?',
+      [pax ?? null, notes ?? null, req.params.id, req.user.tenant_id]
     );
     res.json({ success: true, message: 'Order updated' });
   } catch (err) {
@@ -234,15 +229,14 @@ router.put('/:id', checkRole(['admin', 'cashier']), async (req, res) => {
 router.put('/:id/bill', checkRole(['admin', 'cashier']), async (req, res) => {
   try {
     const [orders] = await db.query(
-      "SELECT * FROM restaurant_orders WHERE id = ? AND status = 'open'",
-      [req.params.id]
+      "SELECT * FROM restaurant_orders WHERE id = ? AND status = 'open' AND tenant_id = ?",
+      [req.params.id, req.user.tenant_id]
     );
     if (!orders.length) return res.status(404).json({ success: false, message: 'Open order not found' });
 
     await db.query("UPDATE restaurant_orders SET status = 'billed' WHERE id = ?", [req.params.id]);
-    await db.query("UPDATE restaurant_tables SET status = 'bill_printed' WHERE id = ?", [orders[0].table_id]);
+    await db.query("UPDATE restaurant_tables SET status = 'bill_printed' WHERE id = ? AND tenant_id = ?", [orders[0].table_id, req.user.tenant_id]);
 
-    // Fetch full order for bill
     const [items] = await db.query(`
       SELECT oi.quantity, oi.unit_price, oi.notes, p.name AS product_name
       FROM restaurant_order_items oi
@@ -260,18 +254,18 @@ router.put('/:id/bill', checkRole(['admin', 'cashier']), async (req, res) => {
 });
 
 // ===============================
-// PUT reopen a billed order (customer wants to add more items)
+// PUT reopen a billed order
 // ===============================
 router.put('/:id/reopen', checkRole(['admin', 'cashier']), async (req, res) => {
   try {
     const [orders] = await db.query(
-      "SELECT * FROM restaurant_orders WHERE id = ? AND status = 'billed'",
-      [req.params.id]
+      "SELECT * FROM restaurant_orders WHERE id = ? AND status = 'billed' AND tenant_id = ?",
+      [req.params.id, req.user.tenant_id]
     );
     if (!orders.length) return res.status(404).json({ success: false, message: 'Billed order not found' });
 
     await db.query("UPDATE restaurant_orders SET status = 'open' WHERE id = ?", [req.params.id]);
-    await db.query("UPDATE restaurant_tables SET status = 'occupied' WHERE id = ?", [orders[0].table_id]);
+    await db.query("UPDATE restaurant_tables SET status = 'occupied' WHERE id = ? AND tenant_id = ?", [orders[0].table_id, req.user.tenant_id]);
 
     res.json({ success: true, message: 'Order reopened' });
   } catch (err) {
@@ -286,7 +280,6 @@ router.put('/:id/reopen', checkRole(['admin', 'cashier']), async (req, res) => {
 router.post('/:id/split', checkRole(['admin', 'cashier']), async (req, res) => {
   try {
     const { split_type, splits } = req.body;
-    // splits: [{ person_label, amount, items_json? }]
     const validTypes = ['equal', 'by_item', 'by_amount'];
     if (!validTypes.includes(split_type)) {
       return res.status(400).json({ success: false, message: 'Invalid split_type' });
@@ -294,7 +287,10 @@ router.post('/:id/split', checkRole(['admin', 'cashier']), async (req, res) => {
 
     const orderId = req.params.id;
 
-    // Clear previous splits
+    // Verify order belongs to tenant
+    const [orderCheck] = await db.query('SELECT id, table_id FROM restaurant_orders WHERE id = ? AND tenant_id = ?', [orderId, req.user.tenant_id]);
+    if (!orderCheck.length) return res.status(404).json({ success: false, message: 'Order not found' });
+
     await db.query('DELETE FROM bill_splits WHERE order_id = ?', [orderId]);
 
     for (const s of splits) {
@@ -304,7 +300,7 @@ router.post('/:id/split', checkRole(['admin', 'cashier']), async (req, res) => {
       );
     }
 
-    await db.query("UPDATE restaurant_tables SET status = 'split' WHERE id = (SELECT table_id FROM restaurant_orders WHERE id = ?)", [orderId]);
+    await db.query("UPDATE restaurant_tables SET status = 'split' WHERE id = ? AND tenant_id = ?", [orderCheck[0].table_id, req.user.tenant_id]);
 
     res.json({ success: true, message: 'Bill split created' });
   } catch (err) {
@@ -324,15 +320,13 @@ router.put('/:id/split/:splitId/pay', checkRole(['admin', 'cashier']), async (re
 
     await connection.query('UPDATE bill_splits SET paid = 1 WHERE id = ? AND order_id = ?', [req.params.splitId, orderId]);
 
-    // Check if all splits paid
     const [unpaid] = await connection.query(
       'SELECT id FROM bill_splits WHERE order_id = ? AND paid = 0',
       [orderId]
     );
 
     if (!unpaid.length) {
-      // All paid — record in sales then close order
-      const [orderRows] = await connection.query('SELECT * FROM restaurant_orders WHERE id = ?', [orderId]);
+      const [orderRows] = await connection.query('SELECT * FROM restaurant_orders WHERE id = ? AND tenant_id = ?', [orderId, req.user.tenant_id]);
       const order = orderRows[0];
 
       const [items] = await connection.query(`
@@ -348,10 +342,11 @@ router.put('/:id/split/:splitId/pay', checkRole(['admin', 'cashier']), async (re
       );
       const shiftId = shifts.length ? shifts[0].id : null;
 
+      const sale_number = await nextTenantNumber(connection, 'sales', req.user.tenant_id);
       const [saleResult] = await connection.query(
-        `INSERT INTO sales (cashier_id, shift_id, total, discount, tax, final_total, payment_method, status, created_at)
-         VALUES (?, ?, ?, 0, 0, ?, 'split', 'completed', NOW())`,
-        [req.user?.id || null, shiftId, total, total]
+        `INSERT INTO sales (sale_number, cashier_id, shift_id, total, discount, tax, final_total, payment_method, status, tenant_id, created_at)
+         VALUES (?, ?, ?, ?, 0, 0, ?, 'split', 'completed', ?, NOW())`,
+        [sale_number, req.user?.id || null, shiftId, total, total, req.user.tenant_id]
       );
       const saleId = saleResult.insertId;
 
@@ -366,7 +361,6 @@ router.put('/:id/split/:splitId/pay', checkRole(['admin', 'cashier']), async (re
         );
       }
 
-      // Insert each split as a separate payment record
       const [allSplits] = await connection.query(
         'SELECT person_label, amount FROM bill_splits WHERE order_id = ?', [orderId]
       );
@@ -378,7 +372,7 @@ router.put('/:id/split/:splitId/pay', checkRole(['admin', 'cashier']), async (re
       }
 
       await connection.query("UPDATE restaurant_orders SET status = 'paid' WHERE id = ?", [orderId]);
-      await connection.query("UPDATE restaurant_tables SET status = 'available' WHERE id = ?", [order.table_id]);
+      await connection.query("UPDATE restaurant_tables SET status = 'available' WHERE id = ? AND tenant_id = ?", [order.table_id, req.user.tenant_id]);
       await connection.query(
         "UPDATE kots SET status = 'billed' WHERE order_id = ? AND status != 'billed'", [orderId]
       );
@@ -407,10 +401,9 @@ router.put('/:id/complete', checkRole(['admin', 'cashier']), async (req, res) =>
     const isSplit = Array.isArray(payments) && payments.length >= 2;
     const orderId = req.params.id;
 
-    // 1. Verify order exists — must be 'billed' (bill print hona zaruri hai)
     const [orders] = await connection.query(
-      "SELECT * FROM restaurant_orders WHERE id = ? AND status = 'billed'",
-      [orderId]
+      "SELECT * FROM restaurant_orders WHERE id = ? AND status = 'billed' AND tenant_id = ?",
+      [orderId, req.user.tenant_id]
     );
     if (!orders.length) {
       await connection.rollback();
@@ -419,7 +412,6 @@ router.put('/:id/complete', checkRole(['admin', 'cashier']), async (req, res) =>
     }
     const order = orders[0];
 
-    // 2. Fetch all order items with product info
     const [items] = await connection.query(`
       SELECT oi.product_id, oi.quantity, oi.unit_price,
              p.name AS product_name, p.stock
@@ -434,31 +426,27 @@ router.put('/:id/complete', checkRole(['admin', 'cashier']), async (req, res) =>
       return res.status(400).json({ success: false, message: 'Order mein koi items nahi hain' });
     }
 
-    // 3. Calculate total
     const total = items.reduce((sum, i) => sum + (i.quantity * parseFloat(i.unit_price)), 0);
 
-    // 4. Get active shift for this cashier (if any)
     const [shifts] = await connection.query(
       "SELECT id FROM shifts WHERE cashier_id = ? AND status = 'open' ORDER BY start_time DESC LIMIT 1",
       [req.user?.id || null]
     );
     const shiftId = shifts.length ? shifts[0].id : null;
 
-    // 5. Get table name
     const [tableRows] = await connection.query(
       'SELECT name FROM restaurant_tables WHERE id = ?', [order.table_id]
     );
     const tableName = tableRows.length ? tableRows[0].name : null;
 
-    // 6. Create sale record
+    const sale_number = await nextTenantNumber(connection, 'sales', req.user.tenant_id);
     const [saleResult] = await connection.query(
-      `INSERT INTO sales (cashier_id, shift_id, total, discount, tax, final_total, payment_method, status, table_name, created_at)
-       VALUES (?, ?, ?, 0, 0, ?, ?, 'completed', ?, NOW())`,
-      [req.user?.id || null, shiftId, total, total, isSplit ? 'split' : payment_method, tableName]
+      `INSERT INTO sales (sale_number, cashier_id, shift_id, total, discount, tax, final_total, payment_method, status, table_name, tenant_id, created_at)
+       VALUES (?, ?, ?, ?, 0, 0, ?, ?, 'completed', ?, ?, NOW())`,
+      [sale_number, req.user?.id || null, shiftId, total, total, isSplit ? 'split' : payment_method, tableName, req.user.tenant_id]
     );
     const saleId = saleResult.insertId;
 
-    // 7. Insert sale_items + deduct stock
     for (const item of items) {
       await connection.query(
         'INSERT INTO sale_items (sale_id, product_id, quantity, price) VALUES (?, ?, ?, ?)',
@@ -470,7 +458,6 @@ router.put('/:id/complete', checkRole(['admin', 'cashier']), async (req, res) =>
       );
     }
 
-    // 8. Insert sale_payments record(s)
     if (isSplit) {
       for (const p of payments) {
         await connection.query(
@@ -485,9 +472,8 @@ router.put('/:id/complete', checkRole(['admin', 'cashier']), async (req, res) =>
       );
     }
 
-    // 9. Mark restaurant order as paid + free table
     await connection.query("UPDATE restaurant_orders SET status = 'paid' WHERE id = ?", [orderId]);
-    await connection.query("UPDATE restaurant_tables SET status = 'available' WHERE id = ?", [order.table_id]);
+    await connection.query("UPDATE restaurant_tables SET status = 'available' WHERE id = ? AND tenant_id = ?", [order.table_id, req.user.tenant_id]);
     await connection.query(
       "UPDATE kots SET status = 'billed' WHERE order_id = ? AND status != 'billed'",
       [orderId]
@@ -496,11 +482,11 @@ router.put('/:id/complete', checkRole(['admin', 'cashier']), async (req, res) =>
     await connection.commit();
     connection.release();
 
-    res.json({ success: true, message: 'Order completed, table freed, sale recorded', data: { sale_id: saleId } });
+    res.json({ success: true, message: 'Order completed, table freed, sale recorded', data: { sale_id: saleId, sale_number } });
   } catch (err) {
     await connection.rollback();
     connection.release();
-    console.error('❌ Complete order error:', err.message, err.sqlMessage || '');
+    console.error('Complete order error:', err.message, err.sqlMessage || '');
     res.status(500).json({ success: false, message: err.sqlMessage || err.message || 'Error completing order' });
   }
 });
@@ -511,13 +497,13 @@ router.put('/:id/complete', checkRole(['admin', 'cashier']), async (req, res) =>
 router.put('/:id/cancel', checkRole(['admin']), async (req, res) => {
   try {
     const [orders] = await db.query(
-      "SELECT * FROM restaurant_orders WHERE id = ? AND status = 'open'",
-      [req.params.id]
+      "SELECT * FROM restaurant_orders WHERE id = ? AND status = 'open' AND tenant_id = ?",
+      [req.params.id, req.user.tenant_id]
     );
     if (!orders.length) return res.status(404).json({ success: false, message: 'Open order not found' });
 
     await db.query("UPDATE restaurant_orders SET status = 'cancelled' WHERE id = ?", [req.params.id]);
-    await db.query("UPDATE restaurant_tables SET status = 'available' WHERE id = ?", [orders[0].table_id]);
+    await db.query("UPDATE restaurant_tables SET status = 'available' WHERE id = ? AND tenant_id = ?", [orders[0].table_id, req.user.tenant_id]);
 
     res.json({ success: true, message: 'Order cancelled' });
   } catch (err) {

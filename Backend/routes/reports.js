@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// 🔐 Middleware
+// Middleware
 const verifyToken = require('../middleware/authMiddleware');
 const checkRole = require('../middleware/roleMiddleware');
 
@@ -13,33 +13,53 @@ router.use(verifyToken);
 router.use(checkRole(['admin']));
 
 // ===============================
-// 📊 GET ALL REPORTS DATA (Combined)
+// GET ALL REPORTS DATA (Combined)
 // ===============================
 router.get('/all', async (req, res) => {
   try {
-    const { period = 'week' } = req.query;
+    const { period = 'week', startDate, endDate } = req.query;
+    const tid = req.user.tenant_id;
 
-    let dateFilter  = 's.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
-    let salesFilter = 'sales.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
-    if (period === 'today') {
-      dateFilter  = 'DATE(s.created_at) = CURDATE()';
-      salesFilter = 'DATE(sales.created_at) = CURDATE()';
-    } else if (period === 'month') {
-      dateFilter  = 's.created_at >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH)';
-      salesFilter = 'sales.created_at >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH)';
-    } else if (period === 'year') {
-      dateFilter  = 's.created_at >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)';
-      salesFilter = 'sales.created_at >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)';
-    } else if (period === 'all') {
-      dateFilter  = '1=1';
-      salesFilter = '1=1';
+    const dateRx = /^\d{4}-\d{2}-\d{2}$/;
+    let dateFilter, salesFilter, expenseFilter;
+    let dateParams = [], salesParams = [], expenseParams = [];
+
+    if (startDate && endDate && dateRx.test(startDate) && dateRx.test(endDate)) {
+      dateFilter     = 'DATE(s.created_at) BETWEEN ? AND ?';
+      salesFilter    = 'DATE(sales.created_at) BETWEEN ? AND ?';
+      expenseFilter  = 'expense_date BETWEEN ? AND ?';
+      dateParams     = [startDate, endDate];
+      salesParams    = [startDate, endDate];
+      expenseParams  = [startDate, endDate];
+    } else {
+      dateFilter     = 's.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
+      salesFilter    = 'sales.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
+      expenseFilter  = 'expense_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
+      if (period === 'today') {
+        dateFilter    = 'DATE(s.created_at) = CURDATE()';
+        salesFilter   = 'DATE(sales.created_at) = CURDATE()';
+        expenseFilter = 'expense_date = CURDATE()';
+      } else if (period === 'month') {
+        dateFilter    = 's.created_at >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH)';
+        salesFilter   = 'sales.created_at >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH)';
+        expenseFilter = 'expense_date >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH)';
+      } else if (period === 'year') {
+        dateFilter    = 's.created_at >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)';
+        salesFilter   = 'sales.created_at >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)';
+        expenseFilter = 'expense_date >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)';
+      } else if (period === 'all') {
+        dateFilter    = '1=1';
+        salesFilter   = '1=1';
+        expenseFilter = '1=1';
+      }
     }
 
     const [
       [salesRows],
       [categoryRows],
       [taxRows],
-      [profitRows]
+      [profitRows],
+      [expenseRows]
     ] = await Promise.all([
       db.query(`
         SELECT DATE(s.created_at) AS date,
@@ -50,9 +70,9 @@ router.get('/all', async (req, res) => {
           SELECT sale_id, SUM(refund_amount) AS refund_amount
           FROM sale_returns GROUP BY sale_id
         ) ret_sum ON s.id = ret_sum.sale_id
-        WHERE ${dateFilter}
+        WHERE s.tenant_id = ? AND ${dateFilter}
         GROUP BY DATE(s.created_at) ORDER BY date ASC
-      `),
+      `, [tid, ...dateParams]),
       db.query(`
         SELECT p.category AS name,
           SUM(si.quantity * si.price) - IFNULL(SUM(sri_sum.returned_amount), 0) AS value
@@ -63,32 +83,40 @@ router.get('/all', async (req, res) => {
           SELECT sale_item_id, SUM(quantity * price) AS returned_amount
           FROM sale_return_items GROUP BY sale_item_id
         ) sri_sum ON si.id = sri_sum.sale_item_id
-        WHERE ${salesFilter}
+        WHERE sales.tenant_id = ? AND ${salesFilter}
         GROUP BY p.category ORDER BY value DESC
-      `),
+      `, [tid, ...salesParams]),
       db.query(`
         SELECT IFNULL(SUM(final_total - tax), 0) AS total_taxable_amount, IFNULL(SUM(tax), 0) AS total_tax
-        FROM sales WHERE status = 'completed' AND ${salesFilter}
-      `),
+        FROM sales WHERE tenant_id = ? AND status = 'completed' AND ${salesFilter}
+      `, [tid, ...salesParams]),
       db.query(`
         SELECT
           (
             SELECT IFNULL(SUM(final_total), 0)
             FROM sales
-            WHERE status != 'cancelled' AND ${salesFilter}
+            WHERE tenant_id = ? AND status != 'cancelled' AND ${salesFilter}
           ) AS total_revenue,
           IFNULL(SUM(p.cost_price * si.quantity), 0) AS total_cost,
           IFNULL((
             SELECT SUM(sr.refund_amount)
             FROM sale_returns sr
             JOIN sales s_ref ON sr.sale_id = s_ref.id
-            WHERE ${salesFilter.replace(/\bsales\b/g, 's_ref')}
+            WHERE s_ref.tenant_id = ? AND ${salesFilter.replace(/\bsales\b/g, 's_ref')}
           ), 0) AS total_refunded
         FROM sale_items si
         JOIN products p ON si.product_id = p.id
         JOIN sales ON si.sale_id = sales.id
-        WHERE ${salesFilter}
-      `)
+        WHERE sales.tenant_id = ? AND ${salesFilter}
+      `, [tid, ...salesParams, tid, ...salesParams, tid, ...salesParams]),
+      db.query(`
+        SELECT
+          IFNULL(SUM(amount), 0) AS total_expenses,
+          (SELECT JSON_ARRAYAGG(JSON_OBJECT('category', category, 'total', cat_total))
+           FROM (SELECT category, SUM(amount) AS cat_total FROM expenses WHERE tenant_id = ? AND ${expenseFilter} GROUP BY category) cat_data
+          ) AS by_category
+        FROM expenses WHERE tenant_id = ? AND ${expenseFilter}
+      `, [tid, ...expenseParams, tid, ...expenseParams])
     ]);
 
     const total_tax = taxRows[0].total_tax;
@@ -96,7 +124,9 @@ router.get('/all', async (req, res) => {
     const total_refunded = profitRows[0].total_refunded;
     const revenue = gross_revenue - total_refunded;
     const cost = profitRows[0].total_cost;
-    const profit = revenue - cost;
+    const gross_profit = revenue - cost;
+    const total_expenses = parseFloat(expenseRows[0]?.total_expenses || 0);
+    const net_profit = gross_profit - total_expenses;
 
     res.json({
       success: true,
@@ -112,15 +142,17 @@ router.get('/all', async (req, res) => {
         profitLoss: {
           total_revenue: revenue,
           total_cost: cost,
-          gross_profit: profit,
-          profit_margin: revenue ? ((profit / revenue) * 100).toFixed(2) : 0,
-          net_profit: profit
+          gross_profit: gross_profit,
+          total_expenses: total_expenses,
+          expenses_by_category: expenseRows[0]?.by_category || [],
+          profit_margin: revenue ? ((net_profit / revenue) * 100).toFixed(2) : 0,
+          net_profit: net_profit
         }
       }
     });
 
   } catch (err) {
-    console.error('❌ Error fetching all reports data:', err);
+    console.error('Error fetching all reports data:', err);
     res.status(500).json({
       success: false,
       message: "Error fetching reports data"
@@ -129,7 +161,7 @@ router.get('/all', async (req, res) => {
 });
 
 // ===============================
-// 📊 1. SALES PERFORMANCE (Last 7 Days)
+// 1. SALES PERFORMANCE (Last 7 Days)
 // ===============================
 router.get('/sales-performance', async (req, res) => {
   try {
@@ -139,10 +171,10 @@ router.get('/sales-performance', async (req, res) => {
         SUM(final_total) AS revenue,
         COUNT(*) AS total_sales
       FROM sales
-      WHERE status != 'cancelled' AND created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+      WHERE tenant_id = ? AND status != 'cancelled' AND created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
       GROUP BY DATE(created_at)
       ORDER BY date ASC
-    `);
+    `, [req.user.tenant_id]);
 
     res.json({
       success: true,
@@ -159,7 +191,7 @@ router.get('/sales-performance', async (req, res) => {
 });
 
 // ===============================
-// 🥧 2. CATEGORY DISTRIBUTION
+// 2. CATEGORY DISTRIBUTION
 // ===============================
 router.get('/category-distribution', async (req, res) => {
   try {
@@ -170,10 +202,10 @@ router.get('/category-distribution', async (req, res) => {
       FROM sale_items si
       JOIN products p ON si.product_id = p.id
       JOIN sales s ON si.sale_id = s.id
-      WHERE s.status != 'cancelled'
+      WHERE s.tenant_id = ? AND s.status != 'cancelled'
       GROUP BY p.category
       ORDER BY value DESC
-    `);
+    `, [req.user.tenant_id]);
 
     res.json({
       success: true,
@@ -190,17 +222,17 @@ router.get('/category-distribution', async (req, res) => {
 });
 
 // ===============================
-// 💰 3. TAX SUMMARY
+// 3. TAX SUMMARY
 // ===============================
 router.get('/tax-summary', async (req, res) => {
   try {
     const [rows] = await db.query(`
-      SELECT 
+      SELECT
         IFNULL(SUM(final_total - tax), 0) AS total_taxable_amount,
         IFNULL(SUM(tax), 0) AS total_tax
       FROM sales
-      WHERE status = 'completed'
-    `);
+      WHERE tenant_id = ? AND status = 'completed'
+    `, [req.user.tenant_id]);
 
     const total_tax = rows[0].total_tax;
 
@@ -224,7 +256,7 @@ router.get('/tax-summary', async (req, res) => {
 });
 
 // ===============================
-// 📈 4. PROFIT & LOSS
+// 4. PROFIT & LOSS
 // ===============================
 router.get('/profit-loss', async (req, res) => {
   try {
@@ -235,8 +267,8 @@ router.get('/profit-loss', async (req, res) => {
       FROM sale_items si
       JOIN products p ON si.product_id = p.id
       JOIN sales s ON si.sale_id = s.id
-      WHERE s.status != 'cancelled'
-    `);
+      WHERE s.tenant_id = ? AND s.status != 'cancelled'
+    `, [req.user.tenant_id]);
 
     const revenue = rows[0].total_revenue;
     const cost = rows[0].total_cost;
@@ -263,7 +295,7 @@ router.get('/profit-loss', async (req, res) => {
 });
 
 // ===============================
-// 📅 5. DAILY SALES (Last 7 Days)
+// 5. DAILY SALES (Last 7 Days)
 // ===============================
 router.get('/daily-sales', async (req, res) => {
   try {
@@ -273,10 +305,10 @@ router.get('/daily-sales', async (req, res) => {
         COUNT(*) AS sales_count,
         SUM(final_total) AS revenue
       FROM sales
-      WHERE status != 'cancelled' AND created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+      WHERE tenant_id = ? AND status != 'cancelled' AND created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
       GROUP BY DATE(created_at)
       ORDER BY date ASC
-    `);
+    `, [req.user.tenant_id]);
 
     res.json({
       success: true,
@@ -293,21 +325,31 @@ router.get('/daily-sales', async (req, res) => {
 });
 
 // ===============================
-// 📦 EXPORT DETAILED DATA
+// EXPORT DETAILED DATA
 // ===============================
 router.get('/export-detail', async (req, res) => {
   try {
-    const { period = 'week' } = req.query;
+    const { period = 'week', startDate, endDate } = req.query;
 
-    let dateCondition = 's.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
-    if (period === 'today') dateCondition = 'DATE(s.created_at) = CURDATE()';
-    else if (period === 'month') dateCondition = 's.created_at >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH)';
-    else if (period === 'year') dateCondition = 's.created_at >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)';
-    else if (period === 'all') dateCondition = '1=1';
+    const dateRx = /^\d{4}-\d{2}-\d{2}$/;
+    let dateCondition;
+    let conditionParams = [];
+
+    if (startDate && endDate && dateRx.test(startDate) && dateRx.test(endDate)) {
+      dateCondition    = 'DATE(s.created_at) BETWEEN ? AND ?';
+      conditionParams  = [startDate, endDate];
+    } else {
+      dateCondition = 's.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
+      if (period === 'today') dateCondition = 'DATE(s.created_at) = CURDATE()';
+      else if (period === 'month') dateCondition = 's.created_at >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH)';
+      else if (period === 'year') dateCondition = 's.created_at >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)';
+      else if (period === 'all') dateCondition = '1=1';
+    }
 
     const [rows] = await db.query(`
       SELECT
         s.id AS sale_id,
+        s.sale_number AS sale_number,
         DATE_FORMAT(s.created_at, '%Y-%m-%d %H:%i') AS date,
         IFNULL(c.name, 'Walk-in') AS customer_name,
         IFNULL(c.phone, '-') AS customer_phone,
@@ -324,9 +366,9 @@ router.get('/export-detail', async (req, res) => {
       LEFT JOIN customers c ON s.customer_id = c.id
       JOIN sale_items si ON s.id = si.sale_id
       JOIN products p ON si.product_id = p.id
-      WHERE ${dateCondition}
+      WHERE s.tenant_id = ? AND ${dateCondition}
       ORDER BY s.id ASC
-    `);
+    `, [req.user.tenant_id, ...conditionParams]);
 
     res.json({ success: true, data: rows });
   } catch (err) {

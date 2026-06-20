@@ -1,5 +1,7 @@
 # Elites POS System - Setup Guide
 
+> **Multi-tenant system:** One deployment (one database + one backend) serves multiple shops (**tenants**). Each tenant's data is isolated by a `tenant_id` column — one shop never sees another's data. Tenants are identified by **login (JWT)**, not by subdomain. A **SuperAdmin** creates new tenants; each tenant has its own **Admin** and **Cashier** users.
+
 ## Prerequisites
 
 Before you begin, ensure you have the following installed:
@@ -14,21 +16,32 @@ Before you begin, ensure you have the following installed:
    - Make sure MySQL is running on your system
    - Default: `localhost:3306`
 
-2. **Create Database and Tables**
-   ```bash
-   # Open MySQL command line or MySQL Workbench and run:
-   mysql -u root -p < database_schema.sql
-   ```
-   
-   Or manually execute the SQL file in MySQL:
+2. **Create Database**
    ```sql
-   source /path/to/database_schema.sql
+   CREATE DATABASE pos_system;
    ```
 
-3. **Verify Database**
+3. **Import schema + multi-tenant migrations (in this order)**
+
+   Open MySQL Workbench → run each file via *File → Open SQL Script → Execute*, or from the command line:
+   ```bash
+   cd Backend
+   mysql -u root -p pos_system < schema.sql
+   mysql -u root -p pos_system < schema_tenant_migration.sql            # tenants table + tenant_id columns + superadmin
+   mysql -u root -p pos_system < schema_tenant_numbering_migration.sql  # per-tenant invoice/customer/PO numbers
+   mysql -u root -p pos_system < schema_softdelete_migration.sql
+   mysql -u root -p pos_system < schema_po_numbering_migration.sql
+   mysql -u root -p pos_system < schema_image_longtext_migration.sql
+   ```
+   > ⚠️ Running only `schema.sql` is **not enough** — without the tenant migration the app will crash on the missing `tenant_id`.
+   > `schema_tenant_migration.sql` auto-creates the **Default Store (tenant 1)** and the **SuperAdmin** user (`superadmin@elites.com` / `super@123`).
+
+4. **Verify Database**
    ```sql
-   USE elites_pos;
-   SHOW TABLES;
+   USE pos_system;
+   SHOW TABLES;                                -- should include `tenants`
+   SELECT id, name FROM tenants;               -- Default Store (id 1)
+   SHOW COLUMNS FROM sales LIKE 'tenant_id';   -- column must exist
    ```
 
 ## Backend Setup
@@ -49,14 +62,16 @@ Before you begin, ensure you have the following installed:
    ```env
    PORT=5001
    JWT_SECRET=elites-pos-secret-key-change-in-production-2024
+   CRON_API_KEY=random-secret-for-scheduled-tasks
    
    DB_HOST=localhost
    DB_USER=root
    DB_PASSWORD=your_mysql_password
-   DB_NAME=elites_pos
+   DB_NAME=pos_system
    
    FRONTEND_URL=http://localhost:9002
    ```
+   > `CRON_API_KEY` is used by scheduled tasks (e.g. loyalty points expiry) via the `x-api-key` header.
 
 4. **Start Backend Server**
    ```bash
@@ -96,11 +111,23 @@ Before you begin, ensure you have the following installed:
 
 ## Default Login Credentials
 
-**Admin Account:**
+**Default Store Admin (tenant 1):**
 - Email: `admin@elites.com`
 - Password: `admin123`
 
-⚠️ **IMPORTANT**: Change the default password immediately after first login!
+**SuperAdmin (manages tenants/shops):**
+- Email: `superadmin@elites.com`
+- Password: `super@123`
+
+⚠️ **IMPORTANT**: Change both default passwords immediately after first login!
+
+### Adding a new shop (tenant)
+1. Log in as the **SuperAdmin**.
+2. Go to the SuperAdmin dashboard (`/superadmin`) → **Create Tenant**.
+3. Fill in the store details + the new shop's admin email/password.
+4. Saving creates the tenant, its settings, and its admin user automatically — no server changes needed.
+
+The new shop's users log in at the same URL; they only ever see their own tenant's data.
 
 ## Testing the Application
 
@@ -127,7 +154,10 @@ Before you begin, ensure you have the following installed:
 **Problem: Database connection failed**
 - Ensure MySQL is running
 - Check database credentials in `.env`
-- Verify database `elites_pos` exists
+- Verify database `pos_system` exists
+
+**Problem: `Unknown column 'tenant_id'` / queries failing**
+- The multi-tenant migrations were not run. Run `schema_tenant_migration.sql` (and the other migrations) as shown in Database Setup.
 
 **Problem: JWT_SECRET error**
 - Make sure `JWT_SECRET` is set in `.env` file
@@ -157,27 +187,41 @@ npm run build
 ```
 pos-system/
 ├── Backend/                 # Express.js API server
-│   ├── middleware/         # Auth and error handling
-│   ├── routes/            # API route handlers
+│   ├── middleware/         # auth, role, superAdmin, apiKey, error
+│   ├── routes/            # API route handlers (incl. tenants.js)
+│   ├── utils/             # tenantSequence.js (per-tenant numbering)
 │   ├── db.js              # Database connection
 │   ├── index.js           # Main server file
+│   ├── schema.sql         # Base database schema
+│   ├── schema_tenant_migration.sql            # Multi-tenant migration
+│   ├── schema_tenant_numbering_migration.sql  # Per-tenant numbering
+│   ├── schema_*_migration.sql                 # Other migrations
 │   └── .env               # Environment variables
 ├── frontend/               # Next.js React application
 │   ├── src/
-│   │   ├── app/          # Page components
+│   │   ├── app/          # Page components (incl. superadmin/)
 │   │   ├── components/   # Reusable components
 │   │   ├── lib/          # Utilities and API client
 │   │   └── contexts/     # React contexts
 │   └── public/           # Static assets
-├── database_schema.sql    # Database setup script
 └── SETUP_GUIDE.md        # This file
 ```
 
 ## API Endpoints
 
+> All tenant-scoped routes automatically filter by the logged-in user's `tenant_id` (from the JWT). Users only see their own shop's data.
+
+### Tenants (SuperAdmin only)
+- `GET /api/tenants` - List all tenants (shops)
+- `GET /api/tenants/:id` - Get single tenant
+- `POST /api/tenants` - Create tenant (+ its settings & admin user)
+- `PUT /api/tenants/:id` - Update tenant (name, status, plan)
+- `DELETE /api/tenants/:id` - Suspend tenant (soft)
+
 ### Authentication
-- `POST /api/auth/login` - User login
+- `POST /api/auth/login` - User login (JWT includes `tenant_id`)
 - `GET /api/auth/profile` - Get user profile (protected)
+- `POST /api/auth/create-cashier` - Create cashier (auto-linked to caller's tenant)
 
 ### Products
 - `GET /api/products` - Get all products (protected)
@@ -217,12 +261,13 @@ pos-system/
 
 ## Security Notes
 
-1. **Change default JWT_SECRET** in production
-2. **Change default admin password** after first login
+1. **Change default JWT_SECRET** in production (and set a strong `CRON_API_KEY`)
+2. **Change default admin AND superadmin passwords** after first login
 3. **Use strong database passwords** in production
 4. **Enable HTTPS** in production
 5. **Set NODE_ENV=production** in production environment
 6. **Regularly update dependencies** to patch security vulnerabilities
+7. **Tenant isolation** is enforced in every query via `tenant_id` — never remove these filters when editing routes
 
 ## Support
 

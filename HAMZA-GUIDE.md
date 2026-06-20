@@ -3,6 +3,34 @@
 
 ---
 
+## 🔐 0. Aapka Account & Multi-Shop System
+
+> **Kya hai?** Elites POS ab **multi-tenant** hai — ek hi system par kai alag-alag dukanein (shops) chal sakti hain. Har shop ka data **bilkul alag aur safe** hota hai. Aapko sirf **apni** dukan ka data dikhta hai, kisi aur ki nahi.
+
+### Login Kaise Karein
+1. Browser mein apna **system URL** kholo (jaise `https://pos.elitespos.com` ya local `http://localhost:9002`)
+2. Apni **email + password** dalo (jo aapko diya gaya hai)
+3. **Login** dabao ✅
+
+Login ke baad aapko sirf **apni dukan** ke products, sales, customers, reports dikhenge. Doosri dukan ka data aapko kabhi nahi dikhega (aur na hi unko aapka).
+
+### 3 Tarah ke Users (Roles)
+| Role | Kaun | Kya kar sakta hai |
+|------|------|-------------------|
+| 👑 **Super Admin** | System provider (Elites POS team) | Nayi dukanein (tenants) banata hai. Aam user nahi. |
+| 🛠️ **Admin** | Dukan ka maalik / manager | Sab kuch — products, reports, settings, naye users (cashiers) banana |
+| 🧑‍💼 **Cashier** | Counter staff | Sirf sales karna (POS), shift, customers |
+
+### Apni Dukan Mein Naya User (Cashier) Banana — Admin
+1. Sidebar → **"Create User"** (ya Users page)
+2. Naam, email, password dalo
+3. Role choose karo — **Cashier** ya **Admin**
+4. **Create** dabao ✅
+
+> 🔒 **Important:** Jo bhi user aap banate ho woh **automatically aapki hi dukan** se juda hota hai. Woh sirf aapki dukan ka data dekhega. Aapko `tenant` waghaira manually set karne ki zaroorat nahi — system khud sambhal leta hai.
+
+---
+
 ## 🕐 1. Shift Management (Shifts)
 
 > **Kya hai?** Cashier apni duty shuru aur khatam karte waqt cash record karta hai.

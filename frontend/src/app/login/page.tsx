@@ -22,6 +22,21 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = React.useState(false)
   const [lockoutUntil, setLockoutUntil] = React.useState<number | null>(null)
   const [timeLeft, setTimeLeft] = React.useState<string>("")
+  const lastAttemptedEmail = React.useRef<string>("")
+
+  // Page load pe localStorage se lockout restore karo
+  React.useEffect(() => {
+    const stored = localStorage.getItem('pos_lockout')
+    if (stored) {
+      const parsed = JSON.parse(stored)
+      if (parsed.until > Date.now()) {
+        setLockoutUntil(parsed.until)
+        setEmail(parsed.email || "")
+      } else {
+        localStorage.removeItem('pos_lockout')
+      }
+    }
+  }, [])
 
   // Timer logic
   React.useEffect(() => {
@@ -34,6 +49,7 @@ export default function LoginPage() {
       if (diff <= 0) {
         setLockoutUntil(null);
         setTimeLeft("");
+        localStorage.removeItem('pos_lockout')
         clearInterval(interval);
       } else {
         const mins = Math.floor(diff / (1000 * 60));
@@ -54,6 +70,7 @@ export default function LoginPage() {
 
     try {
       const trimmedEmail = email.trim();
+      lastAttemptedEmail.current = trimmedEmail
       const trimmedPassword = password.trim();
 
       if (!trimmedEmail || !trimmedPassword) {
@@ -97,8 +114,22 @@ export default function LoginPage() {
 
         const user = response.data.user;
         const permissions = user.permissions || [];
-        
-        if (user.role === 'admin' || permissions.includes('sales')) {
+
+        // Fetch tenant settings to set posMode (retail/restaurant)
+        if (user.role !== 'superadmin') {
+          try {
+            const settingsRes = await api.get('/settings')
+            const mode = settingsRes.data?.data?.mode || 'retail'
+            localStorage.setItem('posMode', mode)
+            window.dispatchEvent(new CustomEvent('posModeChanged', { detail: mode }))
+          } catch {
+            localStorage.setItem('posMode', 'retail')
+          }
+        }
+
+        if (user.role === 'superadmin') {
+          router.push("/superadmin")
+        } else if (user.role === 'admin' || permissions.includes('sales')) {
           router.push("/sales")
         } else if (permissions.length > 0) {
           const routeMap: Record<string, string> = {
@@ -117,6 +148,7 @@ export default function LoginPage() {
         // Handle lockout from response
         if (response.data.lockUntil) {
           setLockoutUntil(response.data.lockUntil);
+          localStorage.setItem('pos_lockout', JSON.stringify({ until: response.data.lockUntil, email: trimmedEmail }))
         }
 
         toast({
@@ -128,6 +160,7 @@ export default function LoginPage() {
     } catch (error: any) {
       if (error.response?.data?.lockUntil) {
         setLockoutUntil(error.response.data.lockUntil);
+        localStorage.setItem('pos_lockout', JSON.stringify({ until: error.response.data.lockUntil, email: lastAttemptedEmail.current }))
       }
 
       toast({
@@ -176,7 +209,7 @@ export default function LoginPage() {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="admin@elites.com"
+                  placeholder="your@email.com"
                   className="pl-10"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -213,14 +246,11 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center text-sm">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" className="rounded" disabled={!!lockoutUntil} />
                 <span className="text-muted-foreground">Remember me</span>
               </label>
-              <a href="/signup" className="text-primary hover:underline text-sm font-medium">
-                Create Account
-              </a>
             </div>
           </CardContent>
 

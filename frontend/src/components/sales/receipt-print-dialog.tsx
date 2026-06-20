@@ -37,6 +37,7 @@ interface ReceiptPrintDialogProps {
   storeName?: string
   orderTime?: Date
   splitPayments?: { method: string; amount: number }[]
+  amountPaid?: number
 }
 
 export function ReceiptPrintDialog({
@@ -47,6 +48,7 @@ export function ReceiptPrintDialog({
   tax,
   discount,
   loyaltyDiscount = 0,
+  total,
   paymentMethod = "Card",
   orderNumber = "------",
   tableNumber,
@@ -55,6 +57,7 @@ export function ReceiptPrintDialog({
   storeName,
   orderTime,
   splitPayments,
+  amountPaid,
 }: ReceiptPrintDialogProps) {
   const { toast } = useToast()
 
@@ -128,12 +131,14 @@ export function ReceiptPrintDialog({
     discount,
     loyaltyDiscount,
     payMethod: paymentMethod,
+    amountPaid,
+    finalTotal: total,
     splitPayments,
   }), [
     fetchedStoreName, storeName, receiptLogo, SERVER_BASE, footerMessage,
     cart, orderNumber, orderTime, currentTime, tableNumber, customerName, customerPhone,
     subtotal, tax, showTaxLine, showDonationLine, discount, loyaltyDiscount,
-    paymentMethod, splitPayments,
+    paymentMethod, amountPaid, total, splitPayments,
   ])
 
   const previewHtml = React.useMemo(() => generateReceiptHTML(receiptOpts), [receiptOpts])

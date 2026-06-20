@@ -14,7 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Store, Bell, CreditCard, Palette, Save, Loader2, Users, LockOpen, Lock, Trash2, ChefHat } from "lucide-react"
+import { Store, Bell, CreditCard, Palette, Save, Loader2, Users, LockOpen, Lock, Trash2, ChefHat, RotateCcw, RefreshCw } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import {
   AlertDialog,
@@ -41,6 +41,16 @@ interface Account {
   failedAttempts: number
   lockUntil: string | null
   created_at: string
+}
+
+type TrashCategory = "products" | "customers" | "expenses" | "shifts" | "tables"
+
+const trashCategoryLabels: Record<TrashCategory, string> = {
+  products: "Products",
+  customers: "Customers",
+  expenses: "Expenses",
+  shifts: "Shifts",
+  tables: "Tables",
 }
 
 interface Settings {
@@ -84,7 +94,12 @@ export default function SettingsPage() {
   const [unlockingId, setUnlockingId] = React.useState<number | null>(null)
   const [deletingId, setDeletingId] = React.useState<number | null>(null)
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<number | null>(null)
+  const [trashCategory, setTrashCategory] = React.useState<TrashCategory>("products")
+  const [trashItems, setTrashItems] = React.useState<any[]>([])
+  const [trashLoading, setTrashLoading] = React.useState(false)
+  const [restoringId, setRestoringId] = React.useState<number | null>(null)
   const isAdmin = typeof window !== 'undefined' && localStorage.getItem('userRole') === 'admin'
+  const currentUserId = typeof window !== 'undefined' ? parseInt(localStorage.getItem('userId') || '0') : 0
 
   const fetchAccounts = React.useCallback(async () => {
     setAccountsLoading(true)
@@ -126,6 +141,55 @@ export default function SettingsPage() {
     }
   }
 
+  const fetchTrash = React.useCallback(async (category: TrashCategory) => {
+    setTrashLoading(true)
+    try {
+      const res = await api.get(`/${category}/trash/list`)
+      setTrashItems(res.data.data || [])
+    } catch (err) {
+      console.error("Failed to fetch deleted items", err)
+      setTrashItems([])
+    } finally {
+      setTrashLoading(false)
+    }
+  }, [])
+
+  const handleRestore = async (id: number) => {
+    setRestoringId(id)
+    try {
+      await api.put(`/${trashCategory}/${id}/restore`)
+      toast({ title: "Restored", description: `${trashCategoryLabels[trashCategory]} item has been restored successfully.` })
+      fetchTrash(trashCategory)
+    } catch (err) {
+      const error = err as AxiosError<{ message?: string }>
+      toast({ title: "Error", description: error.response?.data?.message || "Failed to restore item.", variant: "destructive" })
+    } finally {
+      setRestoringId(null)
+    }
+  }
+
+  const getTrashTitle = (item: any) => {
+    switch (trashCategory) {
+      case "products": return item.name
+      case "customers": return item.name
+      case "expenses": return item.title
+      case "shifts": return `Shift #${item.id} — ${item.cashier_name || ""}`
+      case "tables": return item.name
+      default: return `#${item.id}`
+    }
+  }
+
+  const getTrashSubtitle = (item: any) => {
+    switch (trashCategory) {
+      case "products": return item.sku ? `SKU: ${item.sku}` : (item.category || "")
+      case "customers": return item.phone || item.email || ""
+      case "expenses": return `Rs. ${item.amount} — ${item.expense_date}`
+      case "shifts": return item.start_time ? new Date(item.start_time).toLocaleString() : ""
+      case "tables": return item.floor_section || ""
+      default: return ""
+    }
+  }
+
   const getLockStatus = (account: Account) => {
     if (!account.lockUntil) return null
     const lockTime = new Date(account.lockUntil)
@@ -149,6 +213,10 @@ export default function SettingsPage() {
   React.useEffect(() => {
     if (isAdmin) fetchAccounts()
   }, [isAdmin, fetchAccounts])
+
+  React.useEffect(() => {
+    if (isAdmin) fetchTrash(trashCategory)
+  }, [isAdmin, trashCategory, fetchTrash])
 
   React.useEffect(() => {
     const fetchSettings = async () => {
@@ -192,6 +260,7 @@ export default function SettingsPage() {
     try {
       await api.put("/settings", settings)
       localStorage.setItem('posMode', settings.mode)
+      window.dispatchEvent(new CustomEvent('posModeChanged', { detail: settings.mode }))
       toast({
         title: "Settings saved",
         description: "Your preferences have been updated successfully.",
@@ -525,7 +594,7 @@ export default function SettingsPage() {
                                   Unlock
                                 </Button>
                               )}
-                              {account.email !== 'admin@elites.com' && (
+                              {account.id !== currentUserId && (
                                 <Button
                                   size="sm"
                                   variant="ghost"
@@ -553,6 +622,78 @@ export default function SettingsPage() {
             <p className="text-xs text-muted-foreground mt-4">
               * Passwords are securely encrypted and cannot be displayed.
             </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {isAdmin && (
+        <Card>
+          <CardHeader>
+            <RotateCcw className="w-5 h-5 text-primary mb-2" />
+            <CardTitle>Recently Deleted</CardTitle>
+            <CardDescription>
+              Galti se delete hui cheezein yahan se wapas restore karein
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-2 mb-4">
+              <Select value={trashCategory} onValueChange={(v) => setTrashCategory(v as TrashCategory)}>
+                <SelectTrigger className="w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(trashCategoryLabels).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-9 w-9"
+                onClick={() => fetchTrash(trashCategory)}
+                disabled={trashLoading}
+              >
+                <RefreshCw className={`w-4 h-4 ${trashLoading ? "animate-spin" : ""}`} />
+              </Button>
+            </div>
+
+            {trashLoading ? (
+              <div className="space-y-2">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="h-14 bg-muted rounded animate-pulse" />
+                ))}
+              </div>
+            ) : trashItems.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-6">
+                Koi deleted {trashCategoryLabels[trashCategory].toLowerCase()} nahi hai.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {trashItems.map((item) => (
+                  <div key={item.id} className="flex items-center justify-between p-3 border rounded-lg">
+                    <div>
+                      <p className="text-sm font-medium">{getTrashTitle(item)}</p>
+                      <p className="text-xs text-muted-foreground">{getTrashSubtitle(item)}</p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5 h-7 text-xs"
+                      onClick={() => handleRestore(item.id)}
+                      disabled={restoringId === item.id}
+                    >
+                      {restoringId === item.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <RotateCcw className="w-3.5 h-3.5" />
+                      )}
+                      Restore
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

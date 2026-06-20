@@ -2,11 +2,15 @@
 
 import * as React from "react"
 import { useRouter } from "next/navigation"
-import { ShoppingCart, RotateCcw, Search, Loader2, Printer, Star } from "lucide-react"
+import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, subMonths, subDays } from "date-fns"
+import { type DateRange } from "react-day-picker"
+import { ShoppingCart, RotateCcw, Search, Loader2, Printer, Star, Calendar, ChevronDown } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Calendar as CalendarUI } from "@/components/ui/calendar"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   Dialog,
   DialogContent,
@@ -18,12 +22,52 @@ import ProtectedRoute from "@/components/protected-route"
 import api from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
 
+type ActiveRange = { from: Date; to: Date; label: string }
+
+function getPresets(): { label: string; from: Date; to: Date }[] {
+  const now = new Date()
+  return [
+    { label: "Today",         from: now,                                               to: now },
+    { label: "Yesterday",     from: subDays(now, 1),                                   to: subDays(now, 1) },
+    { label: "This Week",     from: startOfWeek(now, { weekStartsOn: 1 }),             to: now },
+    { label: "Last Week",     from: startOfWeek(subDays(now, 7), { weekStartsOn: 1 }), to: endOfWeek(subDays(now, 7), { weekStartsOn: 1 }) },
+    { label: "This Month",    from: startOfMonth(now),                                 to: now },
+    { label: "Last Month",    from: startOfMonth(subMonths(now, 1)),                   to: endOfMonth(subMonths(now, 1)) },
+    { label: "Last 3 Months", from: startOfMonth(subMonths(now, 2)),                   to: now },
+    { label: "This Year",     from: startOfYear(now),                                  to: now },
+  ]
+}
+
 export default function ReturnHistoryPage() {
   const router = useRouter()
   const { toast } = useToast()
   const [returnsData, setReturnsData] = React.useState<any[]>([])
   const [loading, setLoading] = React.useState(true)
   const [storeName, setStoreName] = React.useState("Elites POS")
+  const [pickerOpen, setPickerOpen] = React.useState(false)
+
+  const [activeRange, setActiveRange] = React.useState<ActiveRange>(() => {
+    try {
+      const saved = localStorage.getItem('pos_returns_range')
+      if (saved) {
+        const p = JSON.parse(saved)
+        return { from: new Date(p.from), to: new Date(p.to), label: p.label }
+      }
+    } catch {}
+    const now = new Date()
+    return { from: startOfMonth(now), to: now, label: "This Month" }
+  })
+  const [calRange, setCalRange] = React.useState<DateRange | undefined>(() => {
+    try {
+      const saved = localStorage.getItem('pos_returns_range')
+      if (saved) {
+        const p = JSON.parse(saved)
+        return { from: new Date(p.from), to: new Date(p.to) }
+      }
+    } catch {}
+    const now = new Date()
+    return { from: startOfMonth(now), to: now }
+  })
 
   const [returnDialogOpen, setReturnDialogOpen] = React.useState(false)
   const [returnSaleId, setReturnSaleId] = React.useState("")
@@ -40,16 +84,53 @@ export default function ReturnHistoryPage() {
   }, [router])
 
   React.useEffect(() => {
+    localStorage.setItem('pos_returns_range', JSON.stringify({
+      from: activeRange.from.toISOString(),
+      to:   activeRange.to.toISOString(),
+      label: activeRange.label,
+    }))
+  }, [activeRange])
+
+  React.useEffect(() => {
     api.get('/settings').then(res => {
       const name = res.data?.data?.store_name || res.data?.settings?.store_name
       if (name) setStoreName(name)
     }).catch(() => {})
+  }, [])
 
-    api.get('/sales/returns/list')
+  React.useEffect(() => {
+    setLoading(true)
+    const startDate = format(activeRange.from, 'yyyy-MM-dd')
+    const endDate   = format(activeRange.to,   'yyyy-MM-dd')
+    api.get(`/sales/returns/list?startDate=${startDate}&endDate=${endDate}`)
       .then(res => { if (res.data?.success) setReturnsData(res.data.data) })
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [])
+  }, [activeRange])
+
+  const applyPreset = (preset: { label: string; from: Date; to: Date }) => {
+    setActiveRange({ from: preset.from, to: preset.to, label: preset.label })
+    setCalRange({ from: preset.from, to: preset.to })
+    setPickerOpen(false)
+  }
+
+  const handleCalendarSelect = (range: DateRange | undefined) => {
+    setCalRange(range)
+  }
+
+  const applyCalendar = () => {
+    if (!calRange?.from || !calRange?.to) return
+    const label = `${format(calRange.from, 'MMM d')} – ${format(calRange.to, 'MMM d, yyyy')}`
+    setActiveRange({ from: calRange.from, to: calRange.to, label })
+    setPickerOpen(false)
+  }
+
+  React.useEffect(() => {
+    if (!pickerOpen) return
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Enter') applyCalendar() }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [pickerOpen, calRange])
 
   const resetReturnDialog = () => {
     setReturnSaleId("")
@@ -60,15 +141,14 @@ export default function ReturnHistoryPage() {
   }
 
   const fetchSaleForReturn = async () => {
-    const id = returnSaleId.replace(/\D/g, '')
-    if (!id) return
+    const number = returnSaleId.replace(/\D/g, '')
+    if (!number) return
     setFetchingSale(true)
     try {
-      const [saleRes, retRes] = await Promise.all([
-        api.get(`/sales/${id}`),
-        api.get(`/sales/${id}/returns`),
-      ])
+      // Receipts show the per-tenant invoice number, so look up by sale_number
+      const saleRes = await api.get(`/sales/lookup/${number}`)
       const { sale, items } = saleRes.data.data
+      const retRes = await api.get(`/sales/${sale.id}/returns`)
       const { returned_qtys } = retRes.data.data
       setFetchedSale(sale)
       setReturnItems(
@@ -96,10 +176,10 @@ export default function ReturnHistoryPage() {
       toast({ title: "Select items", description: "At least one item with quantity > 0", variant: "destructive" })
       return
     }
+    if (!fetchedSale) return
     setProcessingReturn(true)
     try {
-      const id = returnSaleId.replace(/\D/g, '')
-      const res = await api.post(`/sales/${id}/return`, {
+      const res = await api.post(`/sales/${fetchedSale.id}/return`, {
         items: selected.map(i => ({ sale_item_id: i.sale_item_id, quantity: i.return_qty })),
         reason: returnReason,
       })
@@ -110,7 +190,9 @@ export default function ReturnHistoryPage() {
         return_id: res.data.return_id,
         returned_items: selected,
       })
-      const returnsRes = await api.get('/sales/returns/list').catch(() => null)
+      const startDate = format(activeRange.from, 'yyyy-MM-dd')
+      const endDate   = format(activeRange.to,   'yyyy-MM-dd')
+      const returnsRes = await api.get(`/sales/returns/list?startDate=${startDate}&endDate=${endDate}`).catch(() => null)
       if (returnsRes?.data?.success) setReturnsData(returnsRes.data.data)
       toast({ title: "Return Processed", description: `Refund: Rs. ${parseFloat(res.data.refund_amount).toFixed(2)}` })
     } catch (err: any) {
@@ -129,7 +211,7 @@ export default function ReturnHistoryPage() {
         <span style="font-weight:bold">Rs. ${(item.price * item.return_qty).toFixed(2)}</span>
       </div>
     `).join('')
-    const saleNum = `INV-${String(fetchedSale.id).padStart(6, '0')}`
+    const saleNum = `INV-${String(fetchedSale.sale_number ?? fetchedSale.id).padStart(6, '0')}`
     const printWindow = window.open('', '_blank')
     if (!printWindow) return
     printWindow.document.write(`<!DOCTYPE html><html><head>
@@ -183,10 +265,64 @@ export default function ReturnHistoryPage() {
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-primary">Return History</h1>
             <p className="text-sm text-muted-foreground">View and process all customer returns</p>
           </div>
-          <Button size="sm" variant="outline" className="gap-2 w-full sm:w-auto" onClick={() => { resetReturnDialog(); setReturnDialogOpen(true) }}>
-            <RotateCcw className="w-4 h-4" />
-            Process Return
-          </Button>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            {/* Date Range Picker */}
+            <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="gap-2 flex-1 sm:flex-none justify-between min-w-[180px]">
+                  <Calendar className="w-4 h-4 shrink-0" />
+                  <span className="truncate text-sm">{activeRange.label}</span>
+                  <ChevronDown className="w-4 h-4 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="end">
+                <div className="flex flex-col sm:flex-row">
+                  <div className="flex flex-col border-b sm:border-b-0 sm:border-r p-3 gap-0.5 sm:min-w-[148px]">
+                    <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 px-2">Quick Select</p>
+                    {getPresets().map((preset) => (
+                      <button
+                        key={preset.label}
+                        onClick={() => applyPreset(preset)}
+                        className={`text-left text-sm px-3 py-1.5 rounded-md hover:bg-accent transition-colors ${
+                          activeRange.label === preset.label
+                            ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                            : 'text-foreground'
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="p-2 flex flex-col items-center">
+                    <CalendarUI
+                      mode="range"
+                      selected={calRange}
+                      onSelect={handleCalendarSelect}
+                      numberOfMonths={2}
+                      captionLayout="dropdown"
+                      fromYear={2026}
+                      toYear={new Date().getFullYear()}
+                      endMonth={new Date()}
+                      disabled={{ after: new Date() }}
+                    />
+                    <div className="flex items-center justify-between w-full px-3 pb-3 pt-1 gap-3">
+                      <p className="text-xs text-muted-foreground">
+                        {calRange?.from && !calRange?.to ? "Select an end date" : calRange?.from && calRange?.to ? `${format(calRange.from, 'MMM d')} – ${format(calRange.to, 'MMM d')}` : "Select a date range"}
+                      </p>
+                      <Button size="sm" onClick={applyCalendar} disabled={!calRange?.from || !calRange?.to} className="h-7 px-4">
+                        Apply
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
+
+            <Button size="sm" variant="outline" className="gap-2 shrink-0" onClick={() => { resetReturnDialog(); setReturnDialogOpen(true) }}>
+              <RotateCcw className="w-4 h-4" />
+              Process Return
+            </Button>
+          </div>
         </div>
 
         <Card className="w-full">
@@ -216,7 +352,7 @@ export default function ReturnHistoryPage() {
                   {returnsData.map((ret: any) => (
                     <div key={ret.id} className="grid grid-cols-5 gap-3 p-3 items-center hover:bg-muted/20 transition-colors text-sm">
                       <div className="font-semibold text-muted-foreground">#{ret.id}</div>
-                      <div className="font-medium">Sale #{ret.sale_id}</div>
+                      <div className="font-medium">Sale #{ret.sale_number ?? ret.sale_id}</div>
                       <div className="text-muted-foreground truncate">{ret.customer_name || 'Walk-in'}</div>
                       <div className="text-muted-foreground">{new Date(ret.return_date).toLocaleDateString()}</div>
                       <div className="text-right font-bold text-red-500">-Rs. {parseFloat(ret.refund_amount).toFixed(2)}</div>
@@ -265,7 +401,7 @@ export default function ReturnHistoryPage() {
                       <div className="rounded-lg bg-muted/40 p-3 text-sm space-y-1">
                         <div className="flex justify-between">
                           <span className="text-muted-foreground">Sale #</span>
-                          <span className="font-medium">INV-{String(fetchedSale.id).padStart(6, '0')}</span>
+                          <span className="font-medium">INV-{String(fetchedSale.sale_number ?? fetchedSale.id).padStart(6, '0')}</span>
                         </div>
                         {fetchedSale.customer_name && (
                           <div className="flex justify-between">

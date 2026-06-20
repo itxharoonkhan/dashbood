@@ -6,7 +6,7 @@ import { useEffect } from "react"
 
 interface ProtectedRouteProps {
   children: React.ReactNode
-  allowedRoles?: ("admin" | "cashier")[]
+  allowedRoles?: ("admin" | "cashier" | "superadmin")[]
 }
 
 export default function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
@@ -21,7 +21,13 @@ export default function ProtectedRoute({ children, allowedRoles }: ProtectedRout
     '/inventory': 'inventory',
     '/customers': 'customers',
     '/reports': 'reports',
-    '/settings': 'settings'
+    '/settings': 'settings',
+    '/expenses': 'expenses',
+    '/coupons': 'coupons',
+    '/suppliers': 'suppliers',
+    '/shifts': 'shifts',
+    '/tables': 'tables',
+    '/kitchen': 'kitchen',
   }
 
   useEffect(() => {
@@ -34,10 +40,13 @@ export default function ProtectedRoute({ children, allowedRoles }: ProtectedRout
 
     // 1. Check Role Access
     const roleIsAllowed = !allowedRoles || allowedRoles.includes(user.role)
-    
-    // 2. Check Permission Access (Only for non-admins)
+
+    // 2. Check Permission Access
+    // Superadmin = admin with empty permissions array → sab access
+    const isSuperAdmin = user.role === 'admin' && (!user.permissions || user.permissions.length === 0)
+
     let permissionIsAllowed = true
-    if (user.role !== 'admin') {
+    if (!isSuperAdmin) {
       const requiredPermission = routePermissionMap[pathname]
       if (requiredPermission) {
         permissionIsAllowed = user.permissions?.includes(requiredPermission) || false
@@ -45,16 +54,11 @@ export default function ProtectedRoute({ children, allowedRoles }: ProtectedRout
     }
 
     if (!roleIsAllowed || !permissionIsAllowed) {
-      // Access denied - redirect to a safe page (first allowed permission or dashboard if admin)
-      if (user.role === 'admin') {
-        router.push("/dashboard")
-      } else {
-        // Find first allowed page for cashier
-        const allowedPage = Object.keys(routePermissionMap).find(route => 
-          user.permissions?.includes(routePermissionMap[route])
-        )
-        router.push(allowedPage || "/sales") // Default to sales if nothing else
-      }
+      // Find first allowed page
+      const allowedPage = Object.keys(routePermissionMap).find(route =>
+        user.permissions?.includes(routePermissionMap[route])
+      )
+      router.push(allowedPage || "/sales")
     }
   }, [user, isLoading, router, allowedRoles, pathname])
 
@@ -71,8 +75,9 @@ export default function ProtectedRoute({ children, allowedRoles }: ProtectedRout
   }
 
   // Final Permission Check before rendering children
+  const isSuperAdmin = user.role === 'admin' && (!user.permissions || user.permissions.length === 0)
   const requiredPermission = routePermissionMap[pathname]
-  const hasPermission = user.role === 'admin' || !requiredPermission || (user.permissions?.includes(requiredPermission))
+  const hasPermission = isSuperAdmin || !requiredPermission || (user.permissions?.includes(requiredPermission))
   const hasRole = !allowedRoles || allowedRoles.includes(user.role)
 
   if (!hasRole || !hasPermission) {

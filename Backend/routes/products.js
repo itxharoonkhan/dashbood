@@ -6,7 +6,7 @@ const csv = require('csv-parser');
 const fs = require('fs');
 const { Readable } = require('stream');
 
-// 🔐 Middleware
+// Middleware
 const verifyToken = require('../middleware/authMiddleware');
 const checkRole = require('../middleware/roleMiddleware');
 
@@ -31,7 +31,7 @@ router.post('/bulk-import', checkRole(['admin']), upload.single('file'), async (
 
   stream
     .pipe(csv({
-      mapHeaders: ({ header }) => header.trim().replace(/^[\u200B\u200C\u200D\u200E\u200F\uFEFF]/, '')
+      mapHeaders: ({ header }) => header.trim().replace(/^[​‌‍‎‏﻿]/, '')
     }))
     .on('data', (data) => results.push(data))
     .on('error', (err) => {
@@ -42,7 +42,7 @@ router.post('/bulk-import', checkRole(['admin']), upload.single('file'), async (
       const connection = await db.getConnection();
       try {
         await connection.beginTransaction();
-        
+
         let importedCount = 0;
         let errors = [];
 
@@ -62,9 +62,11 @@ router.post('/bulk-import', checkRole(['admin']), upload.single('file'), async (
               continue;
             }
 
-            // Check duplicate SKU in current DB
             if (sku) {
-              const [existing] = await connection.query("SELECT id FROM products WHERE sku = ?", [sku]);
+              const [existing] = await connection.query(
+                "SELECT id FROM products WHERE sku = ? AND tenant_id = ?",
+                [sku, req.user.tenant_id]
+              );
               if (existing.length > 0) {
                 errors.push(`Row ${index + 1}: SKU ${sku} already exists`);
                 continue;
@@ -72,10 +74,10 @@ router.post('/bulk-import', checkRole(['admin']), upload.single('file'), async (
             }
 
             await connection.query(
-              `INSERT INTO products 
-              (name, category, sku, selling_price, cost_price, stock, threshold, unit_type, created_at) 
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-              [name, category, sku, price, cost, stock, threshold, unit]
+              `INSERT INTO products
+              (name, category, sku, selling_price, cost_price, stock, threshold, unit_type, tenant_id, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+              [name, category, sku, price, cost, stock, threshold, unit, req.user.tenant_id]
             );
             importedCount++;
           } catch (rowErr) {
@@ -107,8 +109,8 @@ router.get('/', checkRole(['admin', 'cashier']), async (req, res) => {
   try {
     const { search = '', category = '' } = req.query;
 
-    let sql = "SELECT * FROM products WHERE 1=1";
-    let params = [];
+    let sql = "SELECT * FROM products WHERE tenant_id = ? AND is_deleted = 0";
+    let params = [req.user.tenant_id];
 
     if (search) {
       sql += " AND (name LIKE ? OR sku LIKE ? OR category LIKE ?)";
@@ -143,16 +145,15 @@ router.get('/', checkRole(['admin', 'cashier']), async (req, res) => {
 // ===============================
 router.get('/next-sku', checkRole(['admin', 'cashier']), async (req, res) => {
   try {
-    // Get all SKUs, find highest numeric part
     const [rows] = await db.query(
-      `SELECT sku FROM products WHERE sku IS NOT NULL AND sku != '' ORDER BY id DESC`
+      `SELECT sku FROM products WHERE sku IS NOT NULL AND sku != '' AND tenant_id = ? ORDER BY id DESC`,
+      [req.user.tenant_id]
     );
 
     let nextNum = 1;
 
     for (const row of rows) {
       const sku = row.sku || '';
-      // Extract trailing digits e.g. "ELE007" → 7, "007" → 7, "ICE-012" → 12
       const match = sku.match(/(\d+)$/);
       if (match) {
         const num = parseInt(match[1]);
@@ -160,7 +161,6 @@ router.get('/next-sku', checkRole(['admin', 'cashier']), async (req, res) => {
       }
     }
 
-    // Preserve same digit width as last SKU (e.g. "007" → 3 digits)
     let padWidth = 3;
     if (rows.length > 0) {
       const lastSku = rows[0].sku || '';
@@ -187,8 +187,8 @@ router.get('/generate-sku', checkRole(['admin', 'cashier']), async (req, res) =>
     const prefix = category.trim().toUpperCase().substring(0, 3);
 
     const [rows] = await db.query(
-      `SELECT sku FROM products WHERE sku LIKE ? ORDER BY sku DESC LIMIT 1`,
-      [`${prefix}%`]
+      `SELECT sku FROM products WHERE sku LIKE ? AND tenant_id = ? ORDER BY sku DESC LIMIT 1`,
+      [`${prefix}%`, req.user.tenant_id]
     );
 
     let nextNumber = 1;
@@ -213,7 +213,8 @@ router.get('/generate-sku', checkRole(['admin', 'cashier']), async (req, res) =>
 router.get('/categories/list', checkRole(['admin', 'cashier']), async (req, res) => {
   try {
     const [rows] = await db.query(
-      "SELECT DISTINCT category FROM products"
+      "SELECT DISTINCT category FROM products WHERE tenant_id = ? AND is_deleted = 0",
+      [req.user.tenant_id]
     );
 
     const categories = rows.map(r => r.category);
@@ -240,8 +241,8 @@ router.get('/barcode/:code', checkRole(['admin', 'cashier']), async (req, res) =
     const { code } = req.params;
 
     const [rows] = await db.query(
-      "SELECT * FROM products WHERE barcode = ? LIMIT 1",
-      [code]
+      "SELECT * FROM products WHERE barcode = ? AND tenant_id = ? AND is_deleted = 0 LIMIT 1",
+      [code, req.user.tenant_id]
     );
 
     if (rows.length === 0) {
@@ -273,8 +274,8 @@ router.get('/:id', checkRole(['admin', 'cashier']), async (req, res) => {
     const { id } = req.params;
 
     const [rows] = await db.query(
-      "SELECT * FROM products WHERE id = ?",
-      [id]
+      "SELECT * FROM products WHERE id = ? AND tenant_id = ? AND is_deleted = 0",
+      [id, req.user.tenant_id]
     );
 
     if (rows.length === 0) {
@@ -317,7 +318,6 @@ router.post('/', checkRole(['admin']), async (req, res) => {
       image
     } = req.body;
 
-    // ✅ Validation (Relaxed to allow 0)
     if (!name) {
       return res.status(400).json({
         success: false,
@@ -330,11 +330,10 @@ router.post('/', checkRole(['admin']), async (req, res) => {
     const stockQty = parseInt(stock) || 0;
     const stockThreshold = parseInt(threshold) || 5;
 
-    // ✅ Check duplicate SKU (skip if empty)
     if (sku && sku.trim() !== '') {
       const [existing] = await db.query(
-        "SELECT id FROM products WHERE sku = ?",
-        [sku.trim()]
+        "SELECT id FROM products WHERE sku = ? AND tenant_id = ? AND is_deleted = 0",
+        [sku.trim(), req.user.tenant_id]
       );
 
       if (existing.length > 0) {
@@ -347,9 +346,9 @@ router.post('/', checkRole(['admin']), async (req, res) => {
 
     try {
       const [result] = await db.query(
-        `INSERT INTO products 
-        (name, category, sku, barcode, description, selling_price, cost_price, stock, threshold, unit_type, image, created_at) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        `INSERT INTO products
+        (name, category, sku, barcode, description, selling_price, cost_price, stock, threshold, unit_type, image, tenant_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
           name,
           category || null,
@@ -361,11 +360,11 @@ router.post('/', checkRole(['admin']), async (req, res) => {
           stockQty,
           stockThreshold,
           unit_type || 'pcs',
-          image || null
+          image || null,
+          req.user.tenant_id
         ]
       );
 
-      // ✅ Fetch created product
       const [createdRows] = await db.query("SELECT * FROM products WHERE id = ?", [result.insertId]);
 
       res.json({
@@ -375,9 +374,7 @@ router.post('/', checkRole(['admin']), async (req, res) => {
         data: createdRows[0]
       });
     } catch (dbErr) {
-      console.error('❌ Database Error during product creation:', dbErr);
-      
-      // Return specific error message for debugging
+      console.error('Database Error during product creation:', dbErr);
       return res.status(500).json({
         success: false,
         message: "Database Error: " + dbErr.message,
@@ -386,7 +383,7 @@ router.post('/', checkRole(['admin']), async (req, res) => {
     }
 
   } catch (err) {
-    console.error('❌ Server Error:', err);
+    console.error('Server Error:', err);
     res.status(500).json({
       success: false,
       message: "Internal Server Error: " + err.message
@@ -402,10 +399,9 @@ router.put('/:id', checkRole(['admin']), async (req, res) => {
     const { id } = req.params;
     const updates = req.body;
 
-    // ✅ Check if product exists first
     const [existing] = await db.query(
-      "SELECT * FROM products WHERE id = ?",
-      [id]
+      "SELECT * FROM products WHERE id = ? AND tenant_id = ? AND is_deleted = 0",
+      [id, req.user.tenant_id]
     );
 
     if (existing.length === 0) {
@@ -415,7 +411,6 @@ router.put('/:id', checkRole(['admin']), async (req, res) => {
       });
     }
 
-    // ✅ Build dynamic update query (only update provided fields)
     const fields = [];
     const values = [];
     const allowedFields = ['name', 'category', 'sku', 'barcode', 'description', 'selling_price', 'cost_price', 'stock', 'threshold', 'unit_type', 'image'];
@@ -435,9 +430,10 @@ router.put('/:id', checkRole(['admin']), async (req, res) => {
     }
 
     values.push(id);
+    values.push(req.user.tenant_id);
 
     const [result] = await db.query(
-      `UPDATE products SET ${fields.join(', ')} WHERE id=?`,
+      `UPDATE products SET ${fields.join(', ')} WHERE id = ? AND tenant_id = ?`,
       values
     );
 
@@ -448,7 +444,6 @@ router.put('/:id', checkRole(['admin']), async (req, res) => {
       });
     }
 
-    // ✅ Fetch and return updated product
     const [updatedRows] = await db.query(
       "SELECT * FROM products WHERE id = ?",
       [id]
@@ -470,15 +465,15 @@ router.put('/:id', checkRole(['admin']), async (req, res) => {
 });
 
 // ===============================
-// DELETE PRODUCT (Admin ONLY)
+// DELETE PRODUCT (Admin ONLY) — soft delete, recoverable via /restore
 // ===============================
 router.delete('/:id', checkRole(['admin']), async (req, res) => {
   try {
     const { id } = req.params;
 
     const [result] = await db.query(
-      "DELETE FROM products WHERE id = ?",
-      [id]
+      "UPDATE products SET is_deleted = 1 WHERE id = ? AND tenant_id = ? AND is_deleted = 0",
+      [id, req.user.tenant_id]
     );
 
     if (result.affectedRows === 0) {
@@ -503,17 +498,61 @@ router.delete('/:id', checkRole(['admin']), async (req, res) => {
 });
 
 // ===============================
+// GET DELETED PRODUCTS (Admin ONLY) — recovery list
+// ===============================
+router.get('/trash/list', checkRole(['admin']), async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      "SELECT * FROM products WHERE tenant_id = ? AND is_deleted = 1 ORDER BY id DESC",
+      [req.user.tenant_id]
+    );
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Error fetching deleted products" });
+  }
+});
+
+// ===============================
+// RESTORE DELETED PRODUCT (Admin ONLY)
+// ===============================
+router.put('/:id/restore', checkRole(['admin']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [result] = await db.query(
+      "UPDATE products SET is_deleted = 0 WHERE id = ? AND tenant_id = ? AND is_deleted = 1",
+      [id, req.user.tenant_id]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "Deleted product not found" });
+    }
+    res.json({ success: true, message: "Product restored successfully" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Error restoring product" });
+  }
+});
+
+// ===============================
 // GET VARIANTS FOR A PRODUCT
 // ===============================
 router.get('/:id/variants', checkRole(['admin', 'cashier']), async (req, res) => {
   try {
+    // Verify product belongs to tenant first
+    const [product] = await db.query(
+      'SELECT id FROM products WHERE id = ? AND tenant_id = ?',
+      [req.params.id, req.user.tenant_id]
+    );
+    if (!product.length) {
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
     const [rows] = await db.query(
       'SELECT * FROM product_variants WHERE product_id = ? AND is_active = 1 ORDER BY sort_order ASC, id ASC',
       [req.params.id]
     );
     res.json({ success: true, data: rows });
   } catch (err) {
-    console.error('❌ Variants fetch error:', err);
+    console.error('Variants fetch error:', err);
     res.status(500).json({ success: false, message: 'Failed to fetch variants' });
   }
 });
@@ -525,13 +564,21 @@ router.post('/:id/variants', checkRole(['admin']), async (req, res) => {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
-    const { variants } = req.body; // [{ name, price, sort_order }]
+    const { variants } = req.body;
     const productId = req.params.id;
 
-    // Delete existing variants
+    // Verify product belongs to tenant
+    const [product] = await conn.query(
+      'SELECT id FROM products WHERE id = ? AND tenant_id = ?',
+      [productId, req.user.tenant_id]
+    );
+    if (!product.length) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: 'Product not found' });
+    }
+
     await conn.query('DELETE FROM product_variants WHERE product_id = ?', [productId]);
 
-    // Insert new ones
     if (variants && variants.length > 0) {
       for (let i = 0; i < variants.length; i++) {
         const v = variants[i];
@@ -551,7 +598,7 @@ router.post('/:id/variants', checkRole(['admin']), async (req, res) => {
     res.json({ success: true, message: 'Variants saved', data: rows });
   } catch (err) {
     await conn.rollback();
-    console.error('❌ Variants save error:', err);
+    console.error('Variants save error:', err);
     res.status(500).json({ success: false, message: 'Failed to save variants' });
   } finally {
     conn.release();

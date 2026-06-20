@@ -18,8 +18,8 @@ router.post('/validate', checkRole(['admin', 'cashier']), async (req, res) => {
     }
 
     const [rows] = await db.query(
-      "SELECT * FROM coupons WHERE code = ? AND is_deleted = 0",
-      [code.trim().toUpperCase()]
+      "SELECT * FROM coupons WHERE code = ? AND is_deleted = 0 AND tenant_id = ?",
+      [code.trim().toUpperCase(), req.user.tenant_id]
     );
 
     if (rows.length === 0) {
@@ -68,7 +68,7 @@ router.post('/validate', checkRole(['admin', 'cashier']), async (req, res) => {
       }
     });
   } catch (err) {
-    console.error('❌ Coupon validate error:', err);
+    console.error('Coupon validate error:', err);
     res.status(500).json({ success: false, message: 'Failed to validate coupon' });
   }
 });
@@ -78,13 +78,21 @@ router.post('/validate', checkRole(['admin', 'cashier']), async (req, res) => {
 // ===============================
 router.get('/reports', checkRole(['admin']), async (req, res) => {
   try {
-    const { period = 'month' } = req.query;
+    const { period = 'month', startDate, endDate } = req.query;
 
-    let dateFilter = 'cu.used_at >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH)';
-    if (period === 'today') dateFilter = 'DATE(cu.used_at) = CURDATE()';
-    else if (period === 'week') dateFilter = 'cu.used_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
-    else if (period === 'year') dateFilter = 'cu.used_at >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)';
-    else if (period === 'all') dateFilter = '1=1';
+    const dateRx = /^\d{4}-\d{2}-\d{2}$/;
+    let dateFilter;
+    let dateParams = [];
+    if (startDate && endDate && dateRx.test(startDate) && dateRx.test(endDate)) {
+      dateFilter = 'DATE(cu.used_at) BETWEEN ? AND ?';
+      dateParams = [startDate, endDate];
+    } else {
+      dateFilter = 'cu.used_at >= DATE_SUB(CURDATE(), INTERVAL 1 MONTH)';
+      if (period === 'today') dateFilter = 'DATE(cu.used_at) = CURDATE()';
+      else if (period === 'week') dateFilter = 'cu.used_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)';
+      else if (period === 'year') dateFilter = 'cu.used_at >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)';
+      else if (period === 'all') dateFilter = '1=1';
+    }
 
     const [[summary]] = await db.query(`
       SELECT
@@ -92,8 +100,9 @@ router.get('/reports', checkRole(['admin']), async (req, res) => {
         IFNULL(SUM(cu.discount), 0) AS total_discount,
         COUNT(DISTINCT cu.coupon_id) AS unique_coupons_used
       FROM coupon_usages cu
-      WHERE ${dateFilter}
-    `);
+      JOIN coupons c ON cu.coupon_id = c.id
+      WHERE c.tenant_id = ? AND ${dateFilter}
+    `, [req.user.tenant_id, ...dateParams]);
 
     const [topCoupons] = await db.query(`
       SELECT
@@ -104,11 +113,11 @@ router.get('/reports', checkRole(['admin']), async (req, res) => {
       FROM coupons c
       LEFT JOIN coupon_usages cu ON c.id = cu.coupon_id AND ${dateFilter}
       LEFT JOIN sales s ON cu.sale_id = s.id
-      WHERE c.is_deleted = 0
+      WHERE c.is_deleted = 0 AND c.tenant_id = ?
       GROUP BY c.id
       ORDER BY usage_count DESC
       LIMIT 5
-    `);
+    `, [...dateParams, req.user.tenant_id]);
 
     const [daily] = await db.query(`
       SELECT
@@ -116,17 +125,18 @@ router.get('/reports', checkRole(['admin']), async (req, res) => {
         COUNT(*) AS uses,
         IFNULL(SUM(cu.discount), 0) AS discount
       FROM coupon_usages cu
-      WHERE ${dateFilter}
+      JOIN coupons c ON cu.coupon_id = c.id
+      WHERE c.tenant_id = ? AND ${dateFilter}
       GROUP BY DATE(cu.used_at)
       ORDER BY date ASC
-    `);
+    `, [req.user.tenant_id, ...dateParams]);
 
     res.json({
       success: true,
       data: { summary, topCoupons, daily }
     });
   } catch (err) {
-    console.error('❌ Coupon reports error:', err);
+    console.error('Coupon reports error:', err);
     res.status(500).json({ success: false, message: 'Failed to fetch coupon reports' });
   }
 });
@@ -137,11 +147,12 @@ router.get('/reports', checkRole(['admin']), async (req, res) => {
 router.get('/', checkRole(['admin']), async (req, res) => {
   try {
     const [rows] = await db.query(
-      "SELECT * FROM coupons WHERE is_deleted = 0 ORDER BY created_at DESC"
+      "SELECT * FROM coupons WHERE is_deleted = 0 AND tenant_id = ? ORDER BY created_at DESC",
+      [req.user.tenant_id]
     );
     res.json({ success: true, data: rows });
   } catch (err) {
-    console.error('❌ Coupon list error:', err);
+    console.error('Coupon list error:', err);
     res.status(500).json({ success: false, message: 'Failed to fetch coupons' });
   }
 });
@@ -171,16 +182,16 @@ router.post('/', checkRole(['admin']), async (req, res) => {
 
     const upperCode = code.trim().toUpperCase();
     const [existing] = await db.query(
-      "SELECT id FROM coupons WHERE code = ? AND is_deleted = 0",
-      [upperCode]
+      "SELECT id FROM coupons WHERE code = ? AND is_deleted = 0 AND tenant_id = ?",
+      [upperCode, req.user.tenant_id]
     );
     if (existing.length > 0) {
       return res.status(400).json({ success: false, message: 'Coupon code already exists' });
     }
 
     const [result] = await db.query(
-      `INSERT INTO coupons (code, type, value, min_order_value, usage_limit, expiry_date, is_active)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO coupons (code, type, value, min_order_value, usage_limit, expiry_date, is_active, tenant_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         upperCode,
         type,
@@ -188,14 +199,15 @@ router.post('/', checkRole(['admin']), async (req, res) => {
         parseFloat(min_order_value) || 0,
         usage_limit ? parseInt(usage_limit) : null,
         expiry_date || null,
-        is_active !== false ? 1 : 0
+        is_active !== false ? 1 : 0,
+        req.user.tenant_id
       ]
     );
 
     const [created] = await db.query("SELECT * FROM coupons WHERE id = ?", [result.insertId]);
     res.json({ success: true, message: 'Coupon created successfully', data: created[0] });
   } catch (err) {
-    console.error('❌ Coupon create error:', err);
+    console.error('Coupon create error:', err);
     res.status(500).json({ success: false, message: 'Failed to create coupon' });
   }
 });
@@ -209,8 +221,8 @@ router.put('/:id', checkRole(['admin']), async (req, res) => {
     const { code, type, value, min_order_value, usage_limit, expiry_date, is_active } = req.body;
 
     const [existing] = await db.query(
-      "SELECT * FROM coupons WHERE id = ? AND is_deleted = 0",
-      [id]
+      "SELECT * FROM coupons WHERE id = ? AND is_deleted = 0 AND tenant_id = ?",
+      [id, req.user.tenant_id]
     );
     if (existing.length === 0) {
       return res.status(404).json({ success: false, message: 'Coupon not found' });
@@ -221,8 +233,8 @@ router.put('/:id', checkRole(['admin']), async (req, res) => {
 
     if (upperCode !== coupon.code) {
       const [dup] = await db.query(
-        "SELECT id FROM coupons WHERE code = ? AND id != ? AND is_deleted = 0",
-        [upperCode, id]
+        "SELECT id FROM coupons WHERE code = ? AND id != ? AND is_deleted = 0 AND tenant_id = ?",
+        [upperCode, id, req.user.tenant_id]
       );
       if (dup.length > 0) {
         return res.status(400).json({ success: false, message: 'Coupon code already exists' });
@@ -237,7 +249,7 @@ router.put('/:id', checkRole(['admin']), async (req, res) => {
     }
 
     await db.query(
-      `UPDATE coupons SET code=?, type=?, value=?, min_order_value=?, usage_limit=?, expiry_date=?, is_active=? WHERE id=?`,
+      `UPDATE coupons SET code=?, type=?, value=?, min_order_value=?, usage_limit=?, expiry_date=?, is_active=? WHERE id=? AND tenant_id=?`,
       [
         upperCode,
         newType,
@@ -246,14 +258,15 @@ router.put('/:id', checkRole(['admin']), async (req, res) => {
         usage_limit ? parseInt(usage_limit) : null,
         expiry_date || null,
         is_active !== undefined ? (is_active ? 1 : 0) : coupon.is_active,
-        id
+        id,
+        req.user.tenant_id
       ]
     );
 
     const [updated] = await db.query("SELECT * FROM coupons WHERE id = ?", [id]);
     res.json({ success: true, message: 'Coupon updated', data: updated[0] });
   } catch (err) {
-    console.error('❌ Coupon update error:', err);
+    console.error('Coupon update error:', err);
     res.status(500).json({ success: false, message: 'Failed to update coupon' });
   }
 });
@@ -265,22 +278,22 @@ router.patch('/:id/toggle', checkRole(['admin']), async (req, res) => {
   try {
     const { id } = req.params;
     const [rows] = await db.query(
-      "SELECT is_active FROM coupons WHERE id = ? AND is_deleted = 0",
-      [id]
+      "SELECT is_active FROM coupons WHERE id = ? AND is_deleted = 0 AND tenant_id = ?",
+      [id, req.user.tenant_id]
     );
     if (rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Coupon not found' });
     }
 
     const newStatus = rows[0].is_active ? 0 : 1;
-    await db.query("UPDATE coupons SET is_active = ? WHERE id = ?", [newStatus, id]);
+    await db.query("UPDATE coupons SET is_active = ? WHERE id = ? AND tenant_id = ?", [newStatus, id, req.user.tenant_id]);
     res.json({
       success: true,
       message: newStatus ? 'Coupon activated' : 'Coupon deactivated',
       is_active: newStatus
     });
   } catch (err) {
-    console.error('❌ Coupon toggle error:', err);
+    console.error('Coupon toggle error:', err);
     res.status(500).json({ success: false, message: 'Failed to toggle coupon status' });
   }
 });
@@ -292,20 +305,20 @@ router.delete('/:id', checkRole(['admin']), async (req, res) => {
   try {
     const { id } = req.params;
     const [rows] = await db.query(
-      "SELECT id FROM coupons WHERE id = ? AND is_deleted = 0",
-      [id]
+      "SELECT id FROM coupons WHERE id = ? AND is_deleted = 0 AND tenant_id = ?",
+      [id, req.user.tenant_id]
     );
     if (rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Coupon not found' });
     }
 
     await db.query(
-      "UPDATE coupons SET is_deleted = 1, is_active = 0 WHERE id = ?",
-      [id]
+      "UPDATE coupons SET is_deleted = 1, is_active = 0 WHERE id = ? AND tenant_id = ?",
+      [id, req.user.tenant_id]
     );
     res.json({ success: true, message: 'Coupon deleted' });
   } catch (err) {
-    console.error('❌ Coupon delete error:', err);
+    console.error('Coupon delete error:', err);
     res.status(500).json({ success: false, message: 'Failed to delete coupon' });
   }
 });
