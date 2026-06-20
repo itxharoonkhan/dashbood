@@ -1,2 +1,9 @@
 config.bat
 node_modules
+
+# Runtime-uploaded files (app recreates the folder on startup)
+Backend/uploads/
+
+# Accidental empty root package files (real ones live in frontend/ and Backend/)
+/package.json
+/package-lock.json
