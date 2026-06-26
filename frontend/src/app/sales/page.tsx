@@ -715,10 +715,8 @@ export default function POSPage() {
                 className="w-8 h-8 xs:w-9 xs:h-9 sm:w-10 sm:h-10 md:w-11 md:h-11 rounded-full object-cover border-2 border-primary/30 shadow-md flex-shrink-0"
               />
             ) : (
-              <div className="w-7 h-7 xs:w-8 xs:h-8 sm:w-9 sm:h-9 md:w-10 md:h-10 bg-gradient-to-br from-primary to-secondary rounded-full flex items-center justify-center shadow-lg text-white flex-shrink-0">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" className="w-4 h-4 xs:w-5 xs:h-5 sm:w-5 sm:h-5 md:w-6 md:h-6">
-                  <path d="M3 18L5 6L9 12L12 4L15 12L19 6L21 18H3Z" fill="currentColor"/>
-                </svg>
+              <div className="w-8 h-8 xs:w-9 xs:h-9 sm:w-10 sm:h-10 md:w-11 md:h-11 bg-gradient-to-br from-primary to-secondary rounded-full flex items-center justify-center shadow-lg flex-shrink-0 text-lg xs:text-xl sm:text-2xl">
+                🍦
               </div>
             )}
             <div className="hidden xs:block min-w-0">
