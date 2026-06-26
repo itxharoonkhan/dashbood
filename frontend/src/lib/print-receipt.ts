@@ -120,7 +120,8 @@ export function generateReceiptHTML(opts: PrintReceiptOptions): string {
     * { margin:0; padding:0; box-sizing:border-box; }
     body { font-family:'Courier New',Courier,monospace; width:280px; padding:10px; font-size:12px; background:#fff; }
     .header { text-align:center; margin-bottom:10px; }
-    .logo   { height:72px; width:72px; object-fit:cover; border-radius:50%; margin:0 auto 8px; display:block; border:2px solid #eee; }
+    .logo-wrap { width:72px; height:72px; border-radius:50%; overflow:hidden; margin:0 auto 8px; border:2px solid #eee; }
+    .logo      { width:100%; height:100%; object-fit:cover; display:block; }
     .store  { font-size:20px; font-weight:bold; margin-bottom:2px; }
     .sub    { font-size:10px; color:#666; }
     .dashed { border-top:1px dashed #000; margin:6px 0; }
@@ -144,7 +145,7 @@ export function generateReceiptHTML(opts: PrintReceiptOptions): string {
 </head>
 <body>
   <div class="header">
-    ${logoUrl ? `<img src="${logoUrl}" class="logo" alt="logo"/>` : ''}
+    ${logoUrl ? `<div class="logo-wrap"><img src="${logoUrl}" class="logo" alt="logo"/></div>` : ''}
     <div class="store">${storeName}</div>
     <div class="sub">${dateStr}&nbsp;&nbsp;${timeStr}</div>
   </div>
@@ -250,7 +251,8 @@ export function printReturnReceipt(opts: ReturnReceiptOptions): void {
     * { margin:0; padding:0; box-sizing:border-box; }
     body { font-family:'Courier New',Courier,monospace; width:300px; padding:10px; font-size:12px; background:#fff; }
     .header { text-align:center; margin-bottom:10px; }
-    .logo   { height:72px; width:72px; object-fit:cover; border-radius:50%; margin:0 auto 8px; display:block; border:2px solid #eee; }
+    .logo-wrap { width:72px; height:72px; border-radius:50%; overflow:hidden; margin:0 auto 8px; border:2px solid #eee; }
+    .logo      { width:100%; height:100%; object-fit:cover; display:block; }
     .store  { font-size:20px; font-weight:bold; margin-bottom:2px; }
     .sub    { font-size:10px; color:#666; }
     .return-badge { display:inline-block; border:2px solid #dc2626; color:#dc2626; font-weight:bold; font-size:13px; letter-spacing:2px; padding:2px 8px; margin:6px 0; }
@@ -274,7 +276,7 @@ export function printReturnReceipt(opts: ReturnReceiptOptions): void {
 </head>
 <body>
   <div class="header">
-    ${logoUrl ? `<img src="${logoUrl}" class="logo" alt="logo"/>` : ''}
+    ${logoUrl ? `<div class="logo-wrap"><img src="${logoUrl}" class="logo" alt="logo"/></div>` : ''}
     <div class="store">${storeName}</div>
     <div class="sub">${dateStr}&nbsp;&nbsp;${timeStr}</div>
     <div class="return-badge">RETURN RECEIPT</div>
