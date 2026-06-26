@@ -4,6 +4,13 @@ Full-stack **multi-tenant** Point of Sale system — Next.js frontend + Node.js/
 Ek hi deployment par kai dukanein (**tenants**) chalti hain; har tenant ka data `tenant_id` se isolated hota hai.
 
 ---
+ Default Login Credentials
+
+  - Admin: admin@elites.com / admin123
+  - SuperAdmin: superadmin@elites.com / super@123
+
+
+
 
 ## Database Status
 

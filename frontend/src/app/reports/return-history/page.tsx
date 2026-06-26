@@ -298,7 +298,7 @@ export default function ReturnHistoryPage() {
                       mode="range"
                       selected={calRange}
                       onSelect={handleCalendarSelect}
-                      numberOfMonths={2}
+                      numberOfMonths={1}
                       captionLayout="dropdown"
                       fromYear={2026}
                       toYear={new Date().getFullYear()}

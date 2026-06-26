@@ -3,6 +3,7 @@ import path from 'path';
 
 const nextConfig: NextConfig = {
   outputFileTracingRoot: path.join(__dirname),
+  serverExternalPackages: ['genkit', '@genkit-ai/google-genai', '@genkit-ai/core'],
   webpack: (config) => {
     config.resolve.alias['@opentelemetry/exporter-jaeger'] = false
     config.resolve.alias['@genkit-ai/firebase'] = false

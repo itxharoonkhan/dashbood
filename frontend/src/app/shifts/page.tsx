@@ -41,7 +41,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { useToast } from "@/hooks/use-toast"
 import ProtectedRoute from "@/components/protected-route"
 import api from "@/lib/api"
@@ -444,37 +443,98 @@ export default function ShiftsPage() {
   }
 
   const handlePrint = () => {
-    const printArea = document.getElementById("shift-report-print")
-    if (!printArea) return
+    if (!selectedReport) return
+    const shift = selectedReport
+    const variance = shift.variance_rupees ?? 0
+    const varSign  = variance < 0 ? '- ' : variance > 0 ? '+ ' : ''
+    const varColor = variance < 0 ? 'red' : variance > 0 ? 'green' : 'black'
 
-    const styleEl = document.createElement("style")
-    styleEl.innerHTML = `
-      @media print {
-        body > * { display: none !important; }
-        #shift-print-overlay { display: block !important; }
-      }
-    `
-    document.head.appendChild(styleEl)
+    const cashOutRows = (shift.movements ?? [])
+      .filter(m => m.type === 'cash_out')
+      .map(m => `
+        <tr>
+          <td style="padding-bottom:3px;color:#555">
+            ${new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            ${m.reason ? ` — ${m.reason}` : ''}
+          </td>
+          <td style="text-align:right;color:#c05c00">- ${formatPKR(m.amount_rupees)}</td>
+        </tr>`)
+      .join('')
 
-    const overlay = document.createElement("div")
-    overlay.id = "shift-print-overlay"
-    overlay.style.cssText = "display:none; position:fixed; top:0; left:0; width:100%; background:#fff; z-index:99999; font-family:monospace;"
-    overlay.innerHTML = `
-      <style>
-        @page { size: 80mm auto; margin: 0; }
-        body { margin: 0; }
-        #shift-print-overlay { display: block !important; padding: 8px; }
-      </style>
-      ${printArea.innerHTML}
-    `
-    document.body.appendChild(overlay)
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Shift Report #${shift.id}</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'Courier New',Courier,monospace; width:300px; padding:8px; font-size:11px; background:#fff; color:#000; }
+    h2 { font-size:14px; font-weight:bold; text-align:center; }
+    .sub { font-size:10px; text-align:center; margin:2px 0; }
+    .sub-gray { color:#555; }
+    hr.dashed { border:none; border-top:1px dashed #000; margin:8px 0; }
+    hr.solid  { border:none; border-top:2px solid #000; margin:6px 0; }
+    table { width:100%; }
+    td { padding-bottom:2px; }
+    td:last-child { text-align:right; }
+    .variance { font-size:12px; font-weight:bold; }
+    .section-title { font-size:11px; font-weight:bold; margin-bottom:4px; }
+    .footer { text-align:center; font-size:10px; color:#666; margin-top:8px; }
+    @media print { @page { size:80mm auto; margin:0; } body { padding:4px; } }
+  </style>
+</head>
+<body>
+  <div style="text-align:center;margin-bottom:8px">
+    <h2>END-OF-SHIFT REPORT</h2>
+    <p class="sub">Elites POS System</p>
+    <p class="sub sub-gray">Printed: ${formatDateTime(new Date().toISOString())}</p>
+  </div>
 
-    window.print()
+  <hr class="dashed"/>
 
-    setTimeout(() => {
-      document.head.removeChild(styleEl)
-      document.body.removeChild(overlay)
-    }, 1000)
+  <table><tbody>
+    <tr><td>Cashier</td><td style="font-weight:bold">${shift.cashier_name}</td></tr>
+    <tr><td>Shift #</td><td>${shift.id}</td></tr>
+    <tr><td>Start</td><td>${formatDateTime(shift.start_time)}</td></tr>
+    <tr><td>End</td><td>${formatDateTime(shift.end_time)}</td></tr>
+    <tr><td>Duration</td><td>${formatDuration(shift.start_time, shift.end_time)}</td></tr>
+  </tbody></table>
+
+  <hr class="dashed"/>
+
+  <table><tbody>
+    <tr><td style="padding-bottom:6px">Opening Cash</td><td>${formatPKR(shift.opening_cash_rupees)}</td></tr>
+    <tr><td style="padding-bottom:6px">Total Sales (${shift.transaction_count} txns)</td><td>${formatPKR(shift.total_sales_rupees)}</td></tr>
+    ${(shift.total_cash_out_rupees ?? 0) > 0 ? `<tr><td style="padding-bottom:6px;color:#c05c00">Cash Out</td><td style="color:#c05c00">- ${formatPKR(shift.total_cash_out_rupees)}</td></tr>` : ''}
+    <tr><td style="padding-bottom:6px">Expected Cash</td><td>${formatPKR(shift.expected_cash_rupees)}</td></tr>
+    <tr><td style="padding-bottom:6px">Actual Cash Counted</td><td>${formatPKR(shift.closing_cash_rupees)}</td></tr>
+  </tbody></table>
+
+  ${cashOutRows ? `
+  <hr class="dashed"/>
+  <p class="section-title">CASH OUT DETAIL:</p>
+  <table><tbody>${cashOutRows}</tbody></table>` : ''}
+
+  <hr class="solid"/>
+
+  <table class="variance"><tbody>
+    <tr>
+      <td>Cash Variance</td>
+      <td style="color:${varColor}">${varSign}${formatPKR(Math.abs(variance))}</td>
+    </tr>
+  </tbody></table>
+
+  <hr class="dashed"/>
+  <p class="footer">Thank you — Elites POS</p>
+</body>
+</html>`
+
+    const w = window.open('', '_blank', 'width=400,height=650')
+    if (!w) return
+    w.document.write(html)
+    w.document.close()
+    w.focus()
+    setTimeout(() => { w.print() }, 300)
   }
 
   const varianceColor = (v: number | null | undefined) => {
@@ -714,8 +774,8 @@ export default function ShiftsPage() {
             </CardHeader>
 
             <CardContent className="p-0">
-              <ScrollArea className="h-[400px]">
-                <Table>
+              <div className="overflow-auto max-h-[400px]">
+                <Table className="min-w-[750px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-10">#</TableHead>
@@ -802,7 +862,7 @@ export default function ShiftsPage() {
                     )}
                   </TableBody>
                 </Table>
-              </ScrollArea>
+              </div>
             </CardContent>
           </Card>
         )}
@@ -940,10 +1000,7 @@ export default function ShiftsPage() {
 
             {selectedReport && (
               <div className="space-y-4 overflow-y-auto flex-1 pr-1">
-                {/* Visible report + hidden anchor for printing */}
-                <div id="shift-report-print">
-                  <ShiftReportPrint shift={selectedReport} />
-                </div>
+                <ShiftReportPrint shift={selectedReport} />
 
                 <Separator />
 

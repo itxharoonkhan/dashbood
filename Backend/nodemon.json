@@ -1,7 +1,0 @@
-{
-  "watch": ["routes", "middleware", "index.js", "db.js"],
-  "ext": "js",
-  "ignore": ["node_modules"],
-  "delay": 1000,
-  "signal": "SIGTERM"
-}
