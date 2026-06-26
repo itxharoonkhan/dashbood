@@ -446,47 +446,35 @@ export default function ShiftsPage() {
   const handlePrint = () => {
     const printArea = document.getElementById("shift-report-print")
     if (!printArea) return
-    const win = window.open("", "_blank", "width=380,height=600")
-    if (!win) return
-    win.document.write(`
-      <html><head>
-        <title>Shift Report</title>
-        <style>
-          * { margin: 0; padding: 0; box-sizing: border-box; }
-          body {
-            font-family: 'Courier New', monospace;
-            font-size: 11px;
-            width: 80mm;
-            max-width: 80mm;
-            margin: 0 auto;
-            padding: 8px;
-            color: #000;
-            background: #fff;
-          }
-          table { width: 100%; border-collapse: collapse; }
-          td { padding: 2px 0; font-size: 11px; }
-          hr { border: none; border-top: 1px dashed #000; margin: 6px 0; }
-          h2 { font-size: 14px; text-align: center; margin-bottom: 2px; }
-          p { font-size: 10px; }
-          @page {
-            size: 80mm auto;
-            margin: 0;
-          }
-          @media print {
-            body { padding: 4px; }
-          }
-        </style>
-      </head><body>
-        ${printArea.innerHTML}
-        <script>
-          window.onload = function() {
-            window.print();
-            window.onfocus = function() { setTimeout(function() { window.close(); }, 300); }
-          }
-        <\/script>
-      </body></html>
-    `)
-    win.document.close()
+
+    const styleEl = document.createElement("style")
+    styleEl.innerHTML = `
+      @media print {
+        body > * { display: none !important; }
+        #shift-print-overlay { display: block !important; }
+      }
+    `
+    document.head.appendChild(styleEl)
+
+    const overlay = document.createElement("div")
+    overlay.id = "shift-print-overlay"
+    overlay.style.cssText = "display:none; position:fixed; top:0; left:0; width:100%; background:#fff; z-index:99999; font-family:monospace;"
+    overlay.innerHTML = `
+      <style>
+        @page { size: 80mm auto; margin: 0; }
+        body { margin: 0; }
+        #shift-print-overlay { display: block !important; padding: 8px; }
+      </style>
+      ${printArea.innerHTML}
+    `
+    document.body.appendChild(overlay)
+
+    window.print()
+
+    setTimeout(() => {
+      document.head.removeChild(styleEl)
+      document.body.removeChild(overlay)
+    }, 1000)
   }
 
   const varianceColor = (v: number | null | undefined) => {
