@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import prisma from '@/lib/prisma'
 import { requireRole } from '@/lib/auth'
 
@@ -26,11 +27,11 @@ export async function GET(req: NextRequest) {
     }
     const extraWhere = filters.length > 0 ? 'AND ' + filters.join(' AND ') : ''
 
-    const rows = await prisma.$queryRawUnsafe<unknown[]>(`
+    const rows = await prisma.$queryRaw<unknown[]>(Prisma.sql`
       SELECT e.*, u.name AS created_by_name
       FROM expenses e
       JOIN users u ON e.created_by = u.id
-      WHERE e.tenant_id = ${user.tenant_id} AND e.is_deleted = false ${extraWhere}
+      WHERE e.tenant_id = ${user.tenant_id!} AND e.is_deleted = false ${Prisma.raw(extraWhere)}
       ORDER BY e.expense_date DESC, e.created_at DESC
     `)
     return NextResponse.json({ success: true, data: rows })
