@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { requireRole } from '@/lib/auth'
+import { Prisma } from '@prisma/client'
 
 export async function GET(req: NextRequest) {
   const auth = requireRole(req, ['admin', 'superadmin'])
@@ -41,12 +42,12 @@ export async function GET(req: NextRequest) {
       dateFilter = `AND s.created_at >= CURRENT_DATE - INTERVAL '1 month'`
     }
 
-    const performance = await prisma.$queryRawUnsafe<unknown[]>(`
-      SELECT ${dateLabel} AS period_label, ${groupBy} AS period_key,
+    const performance = await prisma.$queryRaw<unknown[]>(Prisma.sql`
+      SELECT ${Prisma.raw(dateLabel)} AS period_label, ${Prisma.raw(groupBy)} AS period_key,
         COUNT(*)::int AS transactions,
         COALESCE(SUM(s.final_total), 0) AS revenue
       FROM sales s
-      WHERE s.tenant_id = ${tid} AND s.status = 'completed' ${dateFilter}
+      WHERE s.tenant_id = ${tid} AND s.status = 'completed' ${Prisma.raw(dateFilter)}
       GROUP BY period_key, period_label
       ORDER BY period_key ASC
     `)

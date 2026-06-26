@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { requireRole } from '@/lib/auth'
 import { nextTenantNumber } from '@/lib/tenant-sequence'
+import { Prisma } from '@prisma/client'
 
 export async function GET(req: NextRequest) {
   const auth = requireRole(req, ['admin', 'superadmin'])
@@ -13,7 +14,7 @@ export async function GET(req: NextRequest) {
     const supplier_id = searchParams.get('supplier_id')
     const supplierFilter = supplier_id ? `AND po.supplier_id = ${parseInt(supplier_id)}` : ''
 
-    const rows = await prisma.$queryRawUnsafe<unknown[]>(`
+    const rows = await prisma.$queryRaw<unknown[]>(Prisma.sql`
       SELECT po.*,
         s.name AS supplier_name,
         u.name AS created_by_name,
@@ -23,7 +24,7 @@ export async function GET(req: NextRequest) {
       JOIN suppliers s ON s.id = po.supplier_id
       JOIN users u ON u.id = po.created_by
       LEFT JOIN purchase_order_items poi ON poi.po_id = po.id
-      WHERE po.tenant_id = ${user.tenant_id} ${supplierFilter}
+      WHERE po.tenant_id = ${user.tenant_id} ${Prisma.raw(supplierFilter)}
       GROUP BY po.id, s.name, u.name
       ORDER BY po.created_at DESC
     `)

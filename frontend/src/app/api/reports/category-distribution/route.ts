@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { requireRole } from '@/lib/auth'
+import { Prisma } from '@prisma/client'
 
 export async function GET(req: NextRequest) {
   const auth = requireRole(req, ['admin', 'superadmin'])
@@ -23,7 +24,7 @@ export async function GET(req: NextRequest) {
     else if (period === 'year') dateFilter = `AND s.created_at >= CURRENT_DATE - INTERVAL '1 year'`
     else dateFilter = `AND s.created_at >= CURRENT_DATE - INTERVAL '1 month'`
 
-    const data = await prisma.$queryRawUnsafe<unknown[]>(`
+    const data = await prisma.$queryRaw<unknown[]>(Prisma.sql`
       SELECT p.category,
         COALESCE(SUM(si.quantity), 0) AS total_qty,
         COALESCE(SUM(si.quantity * si.price), 0) AS total_revenue,
@@ -31,7 +32,7 @@ export async function GET(req: NextRequest) {
       FROM sale_items si
       JOIN products p ON p.id = si.product_id
       JOIN sales s ON s.id = si.sale_id
-      WHERE s.tenant_id = ${tid} AND s.status = 'completed' ${dateFilter}
+      WHERE s.tenant_id = ${tid} AND s.status = 'completed' ${Prisma.raw(dateFilter)}
       GROUP BY p.category
       ORDER BY total_revenue DESC
     `)

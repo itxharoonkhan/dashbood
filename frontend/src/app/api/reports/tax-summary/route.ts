@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { requireRole } from '@/lib/auth'
+import { Prisma } from '@prisma/client'
 
 export async function GET(req: NextRequest) {
   const auth = requireRole(req, ['admin', 'superadmin'])
@@ -23,23 +24,21 @@ export async function GET(req: NextRequest) {
     else if (period === 'year') dateFilter = `AND s.created_at >= CURRENT_DATE - INTERVAL '1 year'`
     else dateFilter = `AND s.created_at >= CURRENT_DATE - INTERVAL '1 month'`
 
-    const [overall, byMonth] = await Promise.all([
-      prisma.$queryRawUnsafe<unknown[]>(`
-        SELECT
-          COALESCE(SUM(total), 0) AS taxable_amount,
-          COALESCE(SUM(tax), 0) AS total_tax_collected,
-          COALESCE(SUM(final_total), 0) AS total_with_tax,
-          COUNT(*)::int AS transaction_count
-        FROM sales s WHERE tenant_id = ${tid} AND status = 'completed' ${dateFilter}
-      `),
-      prisma.$queryRawUnsafe<unknown[]>(`
-        SELECT TO_CHAR(s.created_at, 'YYYY-MM') AS month,
-          COALESCE(SUM(s.total), 0) AS taxable_amount,
-          COALESCE(SUM(s.tax), 0) AS tax_collected
-        FROM sales s WHERE s.tenant_id = ${tid} AND s.status = 'completed' ${dateFilter}
-        GROUP BY month ORDER BY month ASC
-      `)
-    ])
+    const overall = await prisma.$queryRaw<unknown[]>(Prisma.sql`
+      SELECT
+        COALESCE(SUM(total), 0) AS taxable_amount,
+        COALESCE(SUM(tax), 0) AS total_tax_collected,
+        COALESCE(SUM(final_total), 0) AS total_with_tax,
+        COUNT(*)::int AS transaction_count
+      FROM sales s WHERE tenant_id = ${tid} AND status = 'completed' ${Prisma.raw(dateFilter)}
+    `)
+    const byMonth = await prisma.$queryRaw<unknown[]>(Prisma.sql`
+      SELECT TO_CHAR(s.created_at, 'YYYY-MM') AS month,
+        COALESCE(SUM(s.total), 0) AS taxable_amount,
+        COALESCE(SUM(s.tax), 0) AS tax_collected
+      FROM sales s WHERE s.tenant_id = ${tid} AND s.status = 'completed' ${Prisma.raw(dateFilter)}
+      GROUP BY month ORDER BY month ASC
+    `)
 
     return NextResponse.json({ success: true, data: { overall: Array.isArray(overall) ? overall[0] : {}, byMonth } })
   } catch (err) {

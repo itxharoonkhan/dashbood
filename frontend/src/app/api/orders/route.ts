@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { requireRole } from '@/lib/auth'
+import { Prisma } from '@prisma/client'
 
 export async function GET(req: NextRequest) {
   const auth = requireRole(req, ['admin', 'cashier', 'superadmin'])
@@ -15,14 +16,14 @@ export async function GET(req: NextRequest) {
     const statusFilter = status ? `AND o.status = '${status.replace(/'/g, "''")}'` : ''
     const tableFilter = table_id ? `AND o.table_id = ${parseInt(table_id)}` : ''
 
-    const rows = await prisma.$queryRawUnsafe<unknown[]>(`
+    const rows = await prisma.$queryRaw<unknown[]>(Prisma.sql`
       SELECT o.*,
         t.name AS table_name, t.floor_section,
         COUNT(oi.id)::int AS item_count
       FROM restaurant_orders o
       LEFT JOIN restaurant_tables t ON t.id = o.table_id
       LEFT JOIN restaurant_order_items oi ON oi.order_id = o.id
-      WHERE o.tenant_id = ${user.tenant_id} ${statusFilter} ${tableFilter}
+      WHERE o.tenant_id = ${user.tenant_id} ${Prisma.raw(statusFilter)} ${Prisma.raw(tableFilter)}
       GROUP BY o.id, t.name, t.floor_section
       ORDER BY o.created_at DESC
       LIMIT 100

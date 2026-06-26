@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { requireRole } from '@/lib/auth'
+import { Prisma } from '@prisma/client'
 
 export async function GET(req: NextRequest) {
   const auth = requireRole(req, ['admin', 'superadmin'])
@@ -23,7 +24,7 @@ export async function GET(req: NextRequest) {
     else if (period === 'year') dateFilter = `AND s.created_at >= CURRENT_DATE - INTERVAL '1 year'`
     else dateFilter = `AND s.created_at >= CURRENT_DATE - INTERVAL '1 month'`
 
-    const sales = await prisma.$queryRawUnsafe<unknown[]>(`
+    const sales = await prisma.$queryRaw<unknown[]>(Prisma.sql`
       SELECT s.id, s.sale_number, s.created_at, s.status,
         s.total, s.discount, s.tax, s.final_total,
         s.payment_method, s.coupon_discount,
@@ -35,7 +36,7 @@ export async function GET(req: NextRequest) {
       LEFT JOIN users u ON u.id = s.cashier_id
       LEFT JOIN sale_items si ON si.sale_id = s.id
       LEFT JOIN products p ON p.id = si.product_id
-      WHERE s.tenant_id = ${tid} AND s.status IN ('completed', 'cancelled') ${dateFilter}
+      WHERE s.tenant_id = ${tid} AND s.status IN ('completed', 'cancelled') ${Prisma.raw(dateFilter)}
       GROUP BY s.id, c.name, c.phone, u.name
       ORDER BY s.created_at DESC
       LIMIT 10000

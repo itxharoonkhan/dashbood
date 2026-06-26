@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { requireRole } from '@/lib/auth'
+import { Prisma } from '@prisma/client'
 
 export async function GET(req: NextRequest) {
   const auth = requireRole(req, ['admin', 'superadmin'])
@@ -11,8 +12,9 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url)
     const days = parseInt(searchParams.get('days') || '30')
     const tid = user.tenant_id
+    const daysNum = isNaN(days) ? 30 : days
 
-    const data = await prisma.$queryRawUnsafe<unknown[]>(`
+    const data = await prisma.$queryRaw<unknown[]>(Prisma.sql`
       SELECT DATE(s.created_at) AS date,
         COUNT(*)::int AS transactions,
         COALESCE(SUM(s.final_total), 0) AS revenue,
@@ -20,7 +22,7 @@ export async function GET(req: NextRequest) {
         COALESCE(SUM(s.tax), 0) AS tax
       FROM sales s
       WHERE s.tenant_id = ${tid} AND s.status = 'completed'
-        AND s.created_at >= CURRENT_DATE - INTERVAL '${days} days'
+        AND s.created_at >= CURRENT_DATE - ${Prisma.raw(`INTERVAL '${daysNum} days'`)}
       GROUP BY DATE(s.created_at)
       ORDER BY date ASC
     `)

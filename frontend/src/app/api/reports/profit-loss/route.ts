@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
 import { requireRole } from '@/lib/auth'
+import { Prisma } from '@prisma/client'
 
 export async function GET(req: NextRequest) {
   const auth = requireRole(req, ['admin', 'superadmin'])
@@ -34,17 +35,15 @@ export async function GET(req: NextRequest) {
       expenseDateFilter = `AND e.expense_date >= CURRENT_DATE - INTERVAL '1 month'`
     }
 
-    const [revenueRaw, expenseRaw] = await Promise.all([
-      prisma.$queryRawUnsafe<unknown[]>(`
-        SELECT COALESCE(SUM(final_total), 0) AS total_revenue, COALESCE(SUM(discount), 0) AS total_discounts
-        FROM sales s WHERE tenant_id = ${tid} AND status = 'completed' ${dateFilter}
-      `),
-      prisma.$queryRawUnsafe<unknown[]>(`
-        SELECT COALESCE(SUM(amount), 0) AS total_expenses, category
-        FROM expenses e WHERE tenant_id = ${tid} AND is_deleted = false ${expenseDateFilter}
-        GROUP BY category
-      `)
-    ])
+    const revenueRaw = await prisma.$queryRaw<unknown[]>(Prisma.sql`
+      SELECT COALESCE(SUM(final_total), 0) AS total_revenue, COALESCE(SUM(discount), 0) AS total_discounts
+      FROM sales s WHERE tenant_id = ${tid} AND status = 'completed' ${Prisma.raw(dateFilter)}
+    `)
+    const expenseRaw = await prisma.$queryRaw<unknown[]>(Prisma.sql`
+      SELECT COALESCE(SUM(amount), 0) AS total_expenses, category
+      FROM expenses e WHERE tenant_id = ${tid} AND is_deleted = false ${Prisma.raw(expenseDateFilter)}
+      GROUP BY category
+    `)
 
     const revenue = (Array.isArray(revenueRaw) ? revenueRaw[0] as { total_revenue: number; total_discounts: number } : { total_revenue: 0, total_discounts: 0 })
     const totalExpenses = (expenseRaw as { total_expenses: number }[]).reduce((s, r) => s + parseFloat(String(r.total_expenses)), 0)
