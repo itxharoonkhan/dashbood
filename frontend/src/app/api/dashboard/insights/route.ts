@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
       orderBy: { stock: 'asc' }
     })
     // Filter to truly low-stock after fetch (Prisma doesn't support column comparison in where)
-    const lowStock = lowStockItems.filter(p => p.stock <= p.threshold)
+    const lowStock = lowStockItems.filter((p: { stock: number; threshold: number; name: string }) => p.stock <= p.threshold)
 
     const insights: unknown[] = [{ type: 'info', title: 'System Status', message: 'POS system is running smoothly' }]
     if (lowStock.length > 0) {
