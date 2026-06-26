@@ -42,7 +42,7 @@ export function NotificationBell() {
 
   const fetchCount = async () => {
     try {
-      const res = await api.get("/notifications/count")
+      const res = await api.get("/notifications/count", { _silent: true } as object)
       setCount(res.data.count || 0)
     } catch {}
   }
@@ -50,7 +50,7 @@ export function NotificationBell() {
   const fetchNotifications = async () => {
     setLoading(true)
     try {
-      const res = await api.get("/notifications")
+      const res = await api.get("/notifications", { _silent: true } as object)
       setNotifications(res.data.data || [])
       setCount(res.data.data?.length || 0)
     } catch {} finally {

@@ -1,42 +1,31 @@
 "use client"
 
 import * as React from "react"
+import { useSelector, useDispatch } from "react-redux"
+import { RootState, AppDispatch } from "@/store"
+import { setLanguage as setLanguageAction } from "@/store/slices/languageSlice"
 import { translations, TranslationKeys } from "@/lib/translations"
 
-type Language = 'en' | 'ur'
-
-interface LanguageContextType {
-  language: Language
-  setLanguage: (lang: Language) => void
-  t: (key: keyof TranslationKeys) => string
-  isRTL: boolean
-}
-
-const LanguageContext = React.createContext<LanguageContextType | undefined>(undefined)
+type Language = "en" | "ur"
 
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
-  const [language, setLanguage] = React.useState<Language>('en')
-
-  const t = React.useCallback(
-    (key: keyof TranslationKeys) => {
-      return translations[language][key] || key
-    },
-    [language]
-  )
-
-  const isRTL = language === 'ur'
-
-  return (
-    <LanguageContext.Provider value={{ language, setLanguage, t, isRTL }}>
-      {children}
-    </LanguageContext.Provider>
-  )
+  return <>{children}</>
 }
 
 export function useLanguage() {
-  const context = React.useContext(LanguageContext)
-  if (!context) {
-    throw new Error("useLanguage must be used within LanguageProvider")
+  const dispatch = useDispatch<AppDispatch>()
+  const language = useSelector((s: RootState) => s.language.language)
+
+  const setLanguage = (lang: Language) => {
+    dispatch(setLanguageAction(lang))
   }
-  return context
+
+  const t = React.useCallback(
+    (key: keyof TranslationKeys) => translations[language][key] || key,
+    [language]
+  )
+
+  const isRTL = language === "ur"
+
+  return { language, setLanguage, t, isRTL }
 }

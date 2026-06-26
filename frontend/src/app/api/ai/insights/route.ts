@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { requireRole } from '@/lib/auth';
 import { ai } from '@/ai/genkit';
 
 interface SalesData {
@@ -75,7 +76,10 @@ function generateFallbackInsight(salesData?: SalesData): string {
   return parts.join(' ');
 }
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
+  const auth = requireRole(req, ['admin', 'cashier', 'superadmin'])
+  if (auth instanceof NextResponse) return auth
+
   let prompt: string | undefined;
   let salesData: SalesData | undefined;
 
@@ -97,15 +101,15 @@ export async function POST(req: Request) {
     );
   }
 
-  // Build prompt from salesData if no explicit prompt provided
-  const aiPrompt = prompt ?? `
-    As a POS System Business Analyst, provide a concise (2-3 sentences) daily summary:
-    - Today's Revenue: Rs. ${salesData?.totalAmount ?? 0}
-    - Today's Sales: ${salesData?.totalSales ?? 0}
-    - Low Stock Items: ${salesData?.lowStock ?? 0}
-    - Top Categories: ${salesData?.topCategories?.join(', ') || 'N/A'}
-    Highlight one positive trend and one area that needs attention. Be professional and encouraging.
-  `;
+  // Always inject business context — strict short output
+  const aiPrompt = `You are a smart POS assistant for "Elites POS" in Pakistan.
+RULES: Answer in maximum 2 short sentences. No bullet points. No markdown. No headings. Plain text only. Use Rs. for currency. Answer ONLY about this business data — never give general knowledge.
+
+Business Data:
+Today Revenue: Rs.${salesData?.totalAmount ?? 0} | Sales: ${salesData?.totalSales ?? 0} | Low Stock: ${salesData?.lowStock ?? 0} items | Top: ${salesData?.topCategories?.slice(0,3).join(', ') || 'none'} | Week: Rs.${salesData?.weekRevenue ?? 0} | Month: Rs.${salesData?.monthRevenue ?? 0}
+
+Question: ${prompt ?? 'Give a one-line business summary.'}
+Answer:`;
 
   try {
     const insightText = await generateWithRetry(aiPrompt);

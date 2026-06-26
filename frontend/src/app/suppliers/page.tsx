@@ -52,6 +52,7 @@ interface Product {
 
 interface PurchaseOrder {
   id: number
+  po_number?: number
   supplier_id: number
   supplier_name: string
   status: "draft" | "sent" | "partially_received" | "received" | "cancelled"

@@ -1,7 +1,7 @@
 import axios, { AxiosError } from 'axios'
 import { toast } from '@/hooks/use-toast'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api'
+const API_BASE_URL = '/api'
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -55,8 +55,9 @@ api.interceptors.response.use(
     // 400/403/404/422 are "expected" — pages show their own specific messages.
     // Everything else (network errors, 429, 5xx) is unexpected: log it AND show a toast
     // so the user always sees that something failed, even if the page forgot to handle it.
-    const isExpectedError = [400, 403, 404, 422].includes(status as number)
-    if (!isExpectedError) {
+    const isExpectedError = [400, 403, 404, 422, 429].includes(status as number)
+    const isSilent = (error.config as unknown as Record<string, unknown>)?._silent === true
+    if (!isExpectedError && !isSilent) {
       console.error(`❌ API Error [${status || 'NETWORK'}]: ${error.message}`)
 
       if (onClient) {

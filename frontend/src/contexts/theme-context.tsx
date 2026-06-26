@@ -1,71 +1,60 @@
 "use client"
 
-import React, { createContext, useContext, useEffect, useState } from "react"
+import React, { useEffect } from "react"
+import { useSelector, useDispatch } from "react-redux"
+import { RootState, AppDispatch } from "@/store"
+import { setTheme as setThemeAction, toggleTheme as toggleThemeAction } from "@/store/slices/themeSlice"
 
 type Theme = "dark" | "light"
 
-interface ThemeContextType {
-  theme: Theme
-  toggleTheme: () => void
-  setTheme: (theme: Theme) => void
-}
-
-const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
-
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>("light")
-  const [isInitialized, setIsInitialized] = useState(false)
+  const dispatch = useDispatch<AppDispatch>()
+  const theme = useSelector((s: RootState) => s.theme.theme)
 
   useEffect(() => {
-    // Detect theme on client-side mount
-    const savedTheme = localStorage.getItem("theme") as Theme | null
-    let initialTheme: Theme = "light"
-    
-    if (savedTheme) {
-      initialTheme = savedTheme
+    const saved = localStorage.getItem("theme") as Theme | null
+    let initial: Theme = "light"
+    if (saved) {
+      initial = saved
     } else if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
-      initialTheme = "dark"
+      initial = "dark"
     }
-    
-    setThemeState(initialTheme)
-    document.documentElement.classList.toggle("dark", initialTheme === "dark")
-    setIsInitialized(true)
+    dispatch(setThemeAction(initial))
+    document.documentElement.classList.toggle("dark", initial === "dark")
 
-    // Listen to system theme changes
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)")
-    const handleChange = (e: MediaQueryListEvent) => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)")
+    const onChange = (e: MediaQueryListEvent) => {
       if (!localStorage.getItem("theme")) {
-        const newTheme = e.matches ? "dark" : "light"
-        setThemeState(newTheme)
+        const t: Theme = e.matches ? "dark" : "light"
+        dispatch(setThemeAction(t))
         document.documentElement.classList.toggle("dark", e.matches)
       }
     }
-    mediaQuery.addEventListener("change", handleChange)
-    return () => mediaQuery.removeEventListener("change", handleChange)
-  }, [])
+    mq.addEventListener("change", onChange)
+    return () => mq.removeEventListener("change", onChange)
+  }, [dispatch])
 
-  const setTheme = (newTheme: Theme) => {
-    setThemeState(newTheme)
-    localStorage.setItem("theme", newTheme)
-    document.documentElement.classList.toggle("dark", newTheme === "dark")
-  }
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark")
+  }, [theme])
 
-  const toggleTheme = () => {
-    const newTheme = theme === "dark" ? "light" : "dark"
-    setTheme(newTheme)
-  }
-
-  return (
-    <ThemeContext.Provider value={{ theme, toggleTheme, setTheme }}>
-      {children}
-    </ThemeContext.Provider>
-  )
+  return <>{children}</>
 }
 
 export function useTheme() {
-  const context = useContext(ThemeContext)
-  if (context === undefined) {
-    return { theme: "light" as Theme, toggleTheme: () => {}, setTheme: () => {} }
+  const dispatch = useDispatch<AppDispatch>()
+  const theme = useSelector((s: RootState) => s.theme.theme)
+
+  const setTheme = (t: Theme) => {
+    localStorage.setItem("theme", t)
+    dispatch(setThemeAction(t))
   }
-  return context
+
+  const toggleTheme = () => {
+    const next: Theme = theme === "dark" ? "light" : "dark"
+    localStorage.setItem("theme", next)
+    dispatch(toggleThemeAction())
+  }
+
+  return { theme, setTheme, toggleTheme }
 }

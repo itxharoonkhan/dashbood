@@ -129,6 +129,19 @@ export function PaymentDialog({
   const [loyaltyLoading, setLoyaltyLoading] = React.useState(false)
   const [usePoints, setUsePoints] = React.useState(false)
   const [pointsToUse, setPointsToUse] = React.useState(0)
+  const [loyaltyRate, setLoyaltyRate] = React.useState(100)
+  const [loyaltyMinRedeem, setLoyaltyMinRedeem] = React.useState(100)
+  const [loyaltyMaxPercent, setLoyaltyMaxPercent] = React.useState(30)
+
+  React.useEffect(() => {
+    if (!open) return
+    api.get('/settings').then(res => {
+      const d = res.data?.data || {}
+      if (d.loyalty_rate) setLoyaltyRate(parseFloat(d.loyalty_rate) || 100)
+      if (d.loyalty_min_redeem) setLoyaltyMinRedeem(parseInt(d.loyalty_min_redeem) || 100)
+      if (d.loyalty_max_percent) setLoyaltyMaxPercent(parseInt(d.loyalty_max_percent) || 30)
+    }).catch(() => {})
+  }, [open])
 
   const couponDiscount = appliedCoupon?.discount ?? 0
   const loyaltyDiscount = usePoints ? pointsToUse : 0
@@ -157,6 +170,7 @@ export function PaymentDialog({
       setCustomerPhone("92")
       setPhoneError(null)
       setIsComplete(false)
+      setIsProcessing(false)
       setLoyaltyInfo(null)
       setUsePoints(false)
       setPointsToUse(0)
@@ -172,7 +186,16 @@ export function PaymentDialog({
     setLoyaltyLoading(true)
     try {
       const res = await api.get(`/loyalty/lookup?phone=${encodeURIComponent(phone.trim())}`)
-      setLoyaltyInfo(res.data)
+      const customer = res.data?.data
+      setLoyaltyInfo({
+        found: !!customer,
+        customer_id: customer?.id,
+        customer_name: customer?.name,
+        points: customer?.loyalty_points ?? 0,
+        min_redeem: loyaltyMinRedeem,
+        max_percent: loyaltyMaxPercent,
+        rate: loyaltyRate,
+      })
       setUsePoints(false)
       setPointsToUse(0)
     } catch {
@@ -271,33 +294,18 @@ export function PaymentDialog({
     const resolvedMethod = isSplitMode ? "Split" : METHOD_LABELS[paymentMethod]
     onPaymentMethodChange?.(resolvedMethod)
 
-    const finalName           = customerName.trim()
-    const finalPhone          = customerPhone.trim()
-    const finalPointsRedeemed = usePoints ? pointsToUse : 0
-    const finalAmountPaid     = isSplitMode
-      ? splitRows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
-      : paymentMethod === 'cash' ? parseFloat(cashReceived || '0') : 0
-
-    setTimeout(() => {
-      setIsProcessing(false)
-      setIsComplete(true)
-      toast({ title: "Payment Successful!", description: "Transaction completed successfully." })
-      setTimeout(() => {
-        onComplete({
-          name: finalName,
-          phone: finalPhone,
-          coupon: appliedCoupon ?? undefined,
-          loyaltyPointsRedeemed: finalPointsRedeemed,
-          splitPayments: finalSplitPayments,
-          paymentMethod: resolvedMethod,
-          amountPaid: finalAmountPaid,
-        })
-        setTimeout(() => {
-          onOpenChange(false)
-          setIsComplete(false)
-        }, 100)
-      }, 1500)
-    }, 1500)
+    onComplete({
+      name: customerName.trim(),
+      phone: customerPhone.trim(),
+      coupon: appliedCoupon ?? undefined,
+      loyaltyPointsRedeemed: usePoints ? pointsToUse : 0,
+      splitPayments: finalSplitPayments,
+      paymentMethod: resolvedMethod,
+      amountPaid: isSplitMode
+        ? splitRows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
+        : paymentMethod === 'cash' ? parseFloat(cashReceived || '0') : 0,
+    })
+    // Dialog stays in "processing" state — parent closes it on success via onOpenChange(false)
   }
 
   const isPayDisabled = isProcessing || (
@@ -333,11 +341,11 @@ export function PaymentDialog({
             </div>
             <h3 className="text-xl font-bold text-foreground mb-1">Payment Successful!</h3>
             <p className="text-sm text-muted-foreground">Transaction completed</p>
-            {customerName.trim() && Math.floor(actualTotal / (loyaltyInfo?.rate ?? 100)) > 0 && (
+            {customerName.trim() && Math.floor(actualTotal / loyaltyRate) > 0 && (
               <div className="mt-4 flex items-center gap-2 rounded-full bg-yellow-500/10 border border-yellow-500/30 px-4 py-2">
                 <Star className="w-4 h-4 text-yellow-500 fill-yellow-500" />
                 <span className="text-sm font-semibold text-yellow-500">
-                  +{Math.floor(actualTotal / (loyaltyInfo?.rate ?? 100))} points earned!
+                  +{Math.floor(actualTotal / loyaltyRate)} points earned!
                 </span>
               </div>
             )}

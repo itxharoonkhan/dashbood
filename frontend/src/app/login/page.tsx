@@ -20,52 +20,12 @@ export default function LoginPage() {
   const [email, setEmail] = React.useState("")
   const [password, setPassword] = React.useState("")
   const [isLoading, setIsLoading] = React.useState(false)
-  const [lockoutUntil, setLockoutUntil] = React.useState<number | null>(null)
-  const [timeLeft, setTimeLeft] = React.useState<string>("")
   const lastAttemptedEmail = React.useRef<string>("")
-
-  // Page load pe localStorage se lockout restore karo
-  React.useEffect(() => {
-    const stored = localStorage.getItem('pos_lockout')
-    if (stored) {
-      const parsed = JSON.parse(stored)
-      if (parsed.until > Date.now()) {
-        setLockoutUntil(parsed.until)
-        setEmail(parsed.email || "")
-      } else {
-        localStorage.removeItem('pos_lockout')
-      }
-    }
-  }, [])
-
-  // Timer logic
-  React.useEffect(() => {
-    if (!lockoutUntil) return;
-
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const diff = lockoutUntil - now;
-
-      if (diff <= 0) {
-        setLockoutUntil(null);
-        setTimeLeft("");
-        localStorage.removeItem('pos_lockout')
-        clearInterval(interval);
-      } else {
-        const mins = Math.floor(diff / (1000 * 60));
-        const secs = Math.floor((diff % (1000 * 60)) / 1000);
-        setTimeLeft(`${mins}:${secs < 10 ? '0' : ''}${secs}`);
-      }
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [lockoutUntil]);
 
   const isEmailValid = (email: string) => /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (lockoutUntil) return;
     setIsLoading(true)
 
     try {
@@ -145,12 +105,6 @@ export default function LoginPage() {
           router.push("/sales")
         }
       } else {
-        // Handle lockout from response
-        if (response.data.lockUntil) {
-          setLockoutUntil(response.data.lockUntil);
-          localStorage.setItem('pos_lockout', JSON.stringify({ until: response.data.lockUntil, email: trimmedEmail }))
-        }
-
         toast({
           title: "Login Failed",
           description: response.data.message || 'Login failed',
@@ -158,14 +112,14 @@ export default function LoginPage() {
         })
       }
     } catch (error: any) {
-      if (error.response?.data?.lockUntil) {
-        setLockoutUntil(error.response.data.lockUntil);
-        localStorage.setItem('pos_lockout', JSON.stringify({ until: error.response.data.lockUntil, email: lastAttemptedEmail.current }))
-      }
+      const status = error.response?.status
+      const backendMessage = error.response?.data?.message
 
       toast({
-        title: "Login Failed",
-        description: error.response?.data?.message || 'Login failed. Please try again.',
+        title: status === 429 ? "Too many requests" : "Login Failed",
+        description: status === 429
+          ? (backendMessage || 'Please wait before trying again.')
+          : (backendMessage || 'Login failed. Please try again.'),
         variant: "destructive"
       })
     } finally {
@@ -196,13 +150,7 @@ export default function LoginPage() {
 
         <form onSubmit={handleLogin}>
           <CardContent className="space-y-4">
-            {lockoutUntil && (
-              <div className="bg-destructive/10 border border-white/20 text-destructive rounded-lg p-3 text-sm text-center font-medium animate-pulse">
-                Account locked. Try again in {timeLeft}
-              </div>
-            )}
-            
-            <div className="space-y-2">
+              <div className="space-y-2">
               <Label htmlFor="email">Email Address</Label>
               <div className="relative">
                 <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
@@ -214,7 +162,7 @@ export default function LoginPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
-                  disabled={isLoading || !!lockoutUntil}
+                  disabled={isLoading}
                 />
               </div>
             </div>
@@ -231,7 +179,7 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  disabled={isLoading || !!lockoutUntil}
+                  disabled={isLoading}
                 />
                 <Button
                   type="button"
@@ -239,7 +187,7 @@ export default function LoginPage() {
                   size="icon"
                   className="absolute right-1 top-1 h-8 w-8"
                   onClick={() => setShowPassword(!showPassword)}
-                  disabled={isLoading || !!lockoutUntil}
+                  disabled={isLoading}
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </Button>
@@ -248,7 +196,7 @@ export default function LoginPage() {
 
             <div className="flex items-center text-sm">
               <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" className="rounded" disabled={!!lockoutUntil} />
+                <input type="checkbox" className="rounded" />
                 <span className="text-muted-foreground">Remember me</span>
               </label>
             </div>
@@ -258,9 +206,9 @@ export default function LoginPage() {
             <Button
               type="submit"
               className="w-full h-12 text-lg bg-accent hover:bg-accent/90 text-accent-foreground"
-              disabled={isLoading || !!lockoutUntil}
+              disabled={isLoading}
             >
-              {lockoutUntil ? `Locked (${timeLeft})` : isLoading ? "Signing in..." : "Sign In"}
+              {isLoading ? "Signing in..." : "Sign In"}
             </Button>
 
             <div className="relative w-full">

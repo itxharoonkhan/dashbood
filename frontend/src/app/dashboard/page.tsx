@@ -228,15 +228,14 @@ export default function DashboardPage() {
   React.useEffect(() => {
     setUserRole(localStorage.getItem('userRole') || 'cashier')
     // Fetch receipt settings for print functions
-    const base = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api').replace('/api', '')
     Promise.all([api.get('/settings'), api.get('/settings/receipt')]).then(([sRes, rRes]) => {
       const s = sRes.data.data || sRes.data
       if (s?.store_name) setReceiptStoreName(s.store_name)
-      if (s?.receipt_logo) setReceiptLogoUrl(`${base}${s.receipt_logo}`)
+      if (s?.receipt_logo) setReceiptLogoUrl(s.receipt_logo)
       if (s?.receipt_footer_message) setReceiptFooterMsg(s.receipt_footer_message)
       if (rRes.data?.success && rRes.data?.data) {
         const d = rRes.data.data
-        if (d.receipt_logo) setReceiptLogoUrl(`${base}${d.receipt_logo}`)
+        if (d.receipt_logo) setReceiptLogoUrl(d.receipt_logo)
         if (d.receipt_footer_message) setReceiptFooterMsg(d.receipt_footer_message)
       }
     }).catch(() => {})

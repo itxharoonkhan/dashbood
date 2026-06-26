@@ -28,6 +28,9 @@ export default function ProtectedRoute({ children, allowedRoles }: ProtectedRout
     '/shifts': 'shifts',
     '/tables': 'tables',
     '/kitchen': 'kitchen',
+    '/loyalty': 'customers',
+    '/notifications': 'dashboard',
+    '/ai': 'dashboard',
   }
 
   useEffect(() => {

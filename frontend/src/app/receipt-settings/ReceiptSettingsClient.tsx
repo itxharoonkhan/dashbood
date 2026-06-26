@@ -102,12 +102,15 @@ export default function ReceiptSettingsClient() {
   const handleLogoUpload = async (file: File) => {
     setIsUploading(true)
     try {
-      const formData = new FormData()
-      formData.append("logo", file)
+      const logo_base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result as string)
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
       const res = await api.post<ApiResponse<{ receipt_logo: string }>>(
         "/settings/receipt/logo",
-        formData,
-        { headers: { "Content-Type": "multipart/form-data" } }
+        { logo_base64 }
       )
       setLogoUrl(res.data.data.receipt_logo)
       toast({ title: "Logo Uploaded", description: "Receipt logo saved successfully." })

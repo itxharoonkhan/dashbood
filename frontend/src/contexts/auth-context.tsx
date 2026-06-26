@@ -1,37 +1,20 @@
 "use client"
 
-import React, { createContext, useContext, useEffect, useState } from "react"
+import React, { useEffect } from "react"
+import { useSelector, useDispatch } from "react-redux"
 import { useRouter, usePathname } from "next/navigation"
+import { RootState, AppDispatch } from "@/store"
+import { setUser, clearUser, AuthUser } from "@/store/slices/authSlice"
 
-interface User {
-  id: string
-  name: string
-  role: "admin" | "cashier" | "superadmin"
-  permissions?: string[]
-}
-
-interface AuthContextType {
-  user: User | null
-  userRole: string
-  isLoading: boolean
-  login: (token: string, user: User) => void
-  logout: () => void
-  isAuthenticated: boolean
-}
-
-const AuthContext = createContext<AuthContextType | undefined>(undefined)
-
-// Public routes that don't require authentication
 const PUBLIC_ROUTES = ["/login", "/signup"]
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+  const dispatch = useDispatch<AppDispatch>()
+  const { user, isLoading } = useSelector((s: RootState) => s.auth)
   const router = useRouter()
   const pathname = usePathname()
 
   useEffect(() => {
-    // Check for existing auth on mount
     try {
       const token = localStorage.getItem("authToken")
       const role = localStorage.getItem("userRole")
@@ -40,50 +23,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const permissions = localStorage.getItem("userPermissions")
 
       if (token && role && userId && userName) {
-        setUser({
+        dispatch(setUser({
           id: userId,
           name: userName,
-          role: role as "admin" | "cashier" | "superadmin",
-          permissions: permissions ? JSON.parse(permissions) : []
-        })
+          role: role as AuthUser["role"],
+          permissions: permissions ? JSON.parse(permissions) : [],
+        }))
+      } else {
+        dispatch(setUser(null))
       }
-    } catch (err) {
-      console.warn("Auth storage error:", err)
-    } finally {
-      setIsLoading(false)
+    } catch {
+      dispatch(setUser(null))
     }
-  }, [])
+  }, [dispatch])
 
   useEffect(() => {
-    // Redirect logic
     if (isLoading) return
-
     const isPublicRoute = PUBLIC_ROUTES.includes(pathname)
-
-    if (!user && !isPublicRoute) {
-      // Not logged in, redirect to login if not already there
-      if (pathname !== "/login") {
-        router.replace("/login")
-      }
+    if (!user && !isPublicRoute && pathname !== "/login") {
+      router.replace("/login")
     } else if (user && (pathname === "/" || pathname === "/login")) {
-      // Logged in, redirect from landing or login page
-      if (user.role === 'superadmin') {
+      if (user.role === "superadmin") {
         router.replace("/superadmin")
-      } else if (user.role === 'admin') {
+      } else if (user.role === "admin") {
         router.replace("/dashboard")
       } else {
-        const hasSales = user.permissions?.includes('sales')
+        const hasSales = user.permissions?.includes("sales")
         if (hasSales) {
           router.replace("/sales")
-        } else if (user.permissions && user.permissions.length > 0) {
-          // Map permission back to route
+        } else if (user.permissions?.length > 0) {
           const routeMap: Record<string, string> = {
-            'dashboard': '/dashboard',
-            'sales': '/sales',
-            'inventory': '/inventory',
-            'customers': '/customers',
-            'reports': '/reports',
-            'settings': '/settings'
+            dashboard: "/dashboard", sales: "/sales", inventory: "/inventory",
+            customers: "/customers", reports: "/reports", settings: "/settings",
           }
           router.replace(routeMap[user.permissions[0]] || "/sales")
         } else {
@@ -93,13 +64,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user, isLoading, pathname, router])
 
-  const login = (token: string, userData: User) => {
+  return <>{children}</>
+}
+
+export function useAuth() {
+  const dispatch = useDispatch<AppDispatch>()
+  const { user, isLoading } = useSelector((s: RootState) => s.auth)
+  const router = useRouter()
+
+  const login = (token: string, userData: { id: string | number; name: string; role: AuthUser["role"]; permissions?: string[] }) => {
+    const id = String(userData.id)
     localStorage.setItem("authToken", token)
     localStorage.setItem("userRole", userData.role)
-    localStorage.setItem("userId", userData.id)
+    localStorage.setItem("userId", id)
     localStorage.setItem("userName", userData.name)
     localStorage.setItem("userPermissions", JSON.stringify(userData.permissions || []))
-    setUser(userData)
+    dispatch(setUser({ id, name: userData.name, role: userData.role, permissions: userData.permissions || [] }))
   }
 
   const logout = () => {
@@ -108,24 +88,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem("userId")
     localStorage.removeItem("userName")
     localStorage.removeItem("userPermissions")
-    setUser(null)
+    dispatch(clearUser())
     router.push("/login")
   }
 
-  const isAuthenticated = !!user
-  const userRole = user?.role || ""
-
-  return (
-    <AuthContext.Provider value={{ user, userRole, isLoading, login, logout, isAuthenticated }}>
-      {children}
-    </AuthContext.Provider>
-  )
-}
-
-export function useAuth() {
-  const context = useContext(AuthContext)
-  if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider")
+  return {
+    user,
+    userRole: user?.role || "",
+    isLoading,
+    login,
+    logout,
+    isAuthenticated: !!user,
   }
-  return context
 }

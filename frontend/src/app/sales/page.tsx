@@ -121,7 +121,11 @@ export default function POSPage() {
   const [variantProduct, setVariantProduct] = React.useState<MenuItem | null>(null)
   const [isVariantOpen, setIsVariantOpen] = React.useState(false)
 
-  // Fetch settings (tax rate + invoice prefix) from API
+  const [storeLogo, setStoreLogo] = React.useState<string | null>(null)
+  const [storeName, setStoreName] = React.useState<string>("")
+  const [showDonation, setShowDonation] = React.useState(false)
+
+  // Fetch settings (tax rate + invoice prefix + logo + donation) from API
   React.useEffect(() => {
     const fetchSettings = async () => {
       try {
@@ -129,6 +133,9 @@ export default function POSPage() {
         const raw = res.data.data || res.data.settings || {}
         if (raw.tax_rate) setTaxRate(parseInt(raw.tax_rate) || 5)
         if (raw.invoice_prefix) setInvoicePrefix(raw.invoice_prefix)
+        if (raw.receipt_logo) setStoreLogo(raw.receipt_logo)
+        if (raw.store_name) setStoreName(raw.store_name)
+        setShowDonation(raw.receipt_show_donation === true || raw.receipt_show_donation === 'true')
       } catch {
         // fallback to defaults
       }
@@ -274,33 +281,47 @@ export default function POSPage() {
         setMenuLoading(true)
         const res = await api.get('/menu')
         const items = res.data.data.items || []
-        // Keyword → specific ice cream image
+        // Keyword → food image
         const KEYWORD_IMGS: [string, string][] = [
-          ["chocolate",    "https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=400&h=250&fit=crop"],
-          ["choco",        "https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=400&h=250&fit=crop"],
-          ["vanilla",      "https://images.unsplash.com/photo-1570197788417-0e82375c9371?w=400&h=250&fit=crop"],
-          ["strawberry",   "https://images.unsplash.com/photo-1497034825429-c343d7c6a68f?w=400&h=250&fit=crop"],
-          ["mango",        "https://images.unsplash.com/photo-1501443762994-82bd5dace89a?w=400&h=250&fit=crop"],
-          ["mint",         "https://images.unsplash.com/photo-1563805042-7684c019e1cb?w=400&h=250&fit=crop"],
-          ["pista",        "https://images.unsplash.com/photo-1567206563114-c179f2d59a9c?w=400&h=250&fit=crop"],
-          ["pistachio",    "https://images.unsplash.com/photo-1567206563114-c179f2d59a9c?w=400&h=250&fit=crop"],
-          ["kulfi",        "https://images.unsplash.com/photo-1488900128323-21503983a07e?w=400&h=250&fit=crop"],
-          ["butterscotch", "https://images.unsplash.com/photo-1501443762994-82bd5dace89a?w=400&h=250&fit=crop"],
-          ["kesar",        "https://images.unsplash.com/photo-1501443762994-82bd5dace89a?w=400&h=250&fit=crop"],
-          ["rainbow",      "https://images.unsplash.com/photo-1563805042-7684c019e1cb?w=400&h=250&fit=crop"],
-          ["cone",         "https://images.unsplash.com/photo-1497034825429-c343d7c6a68f?w=400&h=250&fit=crop"],
-          ["gelato",       "https://images.unsplash.com/photo-1567206563114-c179f2d59a9c?w=400&h=250&fit=crop"],
-          ["sorbet",       "https://images.unsplash.com/photo-1563805042-7684c019e1cb?w=400&h=250&fit=crop"],
+          ["biryani",    "https://images.unsplash.com/photo-1589302168068-964664d93dc0?w=400&h=250&fit=crop"],
+          ["rice",       "https://images.unsplash.com/photo-1516714435131-44d6b64dc6a2?w=400&h=250&fit=crop"],
+          ["burger",     "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=400&h=250&fit=crop"],
+          ["pizza",      "https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?w=400&h=250&fit=crop"],
+          ["karahi",     "https://images.unsplash.com/photo-1585937421612-70a008356fbe?w=400&h=250&fit=crop"],
+          ["curry",      "https://images.unsplash.com/photo-1585937421612-70a008356fbe?w=400&h=250&fit=crop"],
+          ["chicken",    "https://images.unsplash.com/photo-1598103442097-8b74394b95c3?w=400&h=250&fit=crop"],
+          ["naan",       "https://images.unsplash.com/photo-1601050690597-df0568f70950?w=400&h=250&fit=crop"],
+          ["roti",       "https://images.unsplash.com/photo-1601050690597-df0568f70950?w=400&h=250&fit=crop"],
+          ["bread",      "https://images.unsplash.com/photo-1601050690597-df0568f70950?w=400&h=250&fit=crop"],
+          ["sandwich",   "https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=400&h=250&fit=crop"],
+          ["wrap",       "https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=400&h=250&fit=crop"],
+          ["shawarma",   "https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=400&h=250&fit=crop"],
+          ["salad",      "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=400&h=250&fit=crop"],
+          ["soup",       "https://images.unsplash.com/photo-1547592180-85f173990554?w=400&h=250&fit=crop"],
+          ["pasta",      "https://images.unsplash.com/photo-1551183053-bf91798d792b?w=400&h=250&fit=crop"],
+          ["nihari",     "https://images.unsplash.com/photo-1585937421612-70a008356fbe?w=400&h=250&fit=crop"],
+          ["halwa",      "https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400&h=250&fit=crop"],
+          ["cake",       "https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=400&h=250&fit=crop"],
+          ["drink",      "https://images.unsplash.com/photo-1544145945-f90425340c7e?w=400&h=250&fit=crop"],
+          ["juice",      "https://images.unsplash.com/photo-1544145945-f90425340c7e?w=400&h=250&fit=crop"],
+          ["tea",        "https://images.unsplash.com/photo-1544145945-f90425340c7e?w=400&h=250&fit=crop"],
+          ["chai",       "https://images.unsplash.com/photo-1544145945-f90425340c7e?w=400&h=250&fit=crop"],
+          ["coffee",     "https://images.unsplash.com/photo-1509042239860-f550ce710b93?w=400&h=250&fit=crop"],
+          ["fish",       "https://images.unsplash.com/photo-1519708227418-c8fd9a32b7a2?w=400&h=250&fit=crop"],
+          ["mutton",     "https://images.unsplash.com/photo-1585937421612-70a008356fbe?w=400&h=250&fit=crop"],
+          ["beef",       "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=400&h=250&fit=crop"],
+          ["fries",      "https://images.unsplash.com/photo-1576107232684-1279f8dd7c4f?w=400&h=250&fit=crop"],
+          ["desi",       "https://images.unsplash.com/photo-1589302168068-964664d93dc0?w=400&h=250&fit=crop"],
         ]
-        // Fallback pool — rotates by product id
+        // Fallback pool — general food, rotates by product id
         const FALLBACK_POOL = [
-          "https://images.unsplash.com/photo-1563805042-7684c019e1cb?w=400&h=250&fit=crop",
-          "https://images.unsplash.com/photo-1497034825429-c343d7c6a68f?w=400&h=250&fit=crop",
-          "https://images.unsplash.com/photo-1570197788417-0e82375c9371?w=400&h=250&fit=crop",
-          "https://images.unsplash.com/photo-1501443762994-82bd5dace89a?w=400&h=250&fit=crop",
-          "https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=400&h=250&fit=crop",
-          "https://images.unsplash.com/photo-1488900128323-21503983a07e?w=400&h=250&fit=crop",
-          "https://images.unsplash.com/photo-1567206563114-c179f2d59a9c?w=400&h=250&fit=crop",
+          "https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400&h=250&fit=crop",
+          "https://images.unsplash.com/photo-1567620905732-2d1ec7ab7445?w=400&h=250&fit=crop",
+          "https://images.unsplash.com/photo-1540189549336-e6e99c3679fe?w=400&h=250&fit=crop",
+          "https://images.unsplash.com/photo-1476224203421-9ac39bcb3327?w=400&h=250&fit=crop",
+          "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=400&h=250&fit=crop",
+          "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=400&h=250&fit=crop",
+          "https://images.unsplash.com/photo-1490645935967-10de6ba17061?w=400&h=250&fit=crop",
         ]
         const getImg = (name: string, id: number) => {
           const lower = name.toLowerCase()
@@ -566,7 +587,7 @@ export default function POSPage() {
 
   const subtotal = cart.reduce((sum, item) => sum + (Number(item.price) * item.quantity), 0)
   const tax = parseFloat((subtotal * (taxRate / 100)).toFixed(2))
-  const donation = 1
+  const donation = showDonation ? 1 : 0
   const total = subtotal + tax + donation
 
   const handleCheckout = () => {
@@ -643,18 +664,15 @@ export default function POSPage() {
           amountPaid: customerData?.amountPaid,
         }
         setSavedOrder(orderData)
-
-        // Ab cart clear karo aur order number next ke liye reset karo
         setCart([])
         setCartItems({})
         setDiscount(0)
         setShowMobileCart(false)
         setOrderNumber('------')
+        setIsPaymentOpen(false)    // close payment dialog immediately
+        setIsPrintDialogOpen(true) // open print dialog immediately
 
-        toast({
-          title: t('msg.paymentSuccess'),
-          description: t('msg.orderPlaced'),
-        })
+        toast({ title: t('msg.paymentSuccess'), description: t('msg.orderPlaced') })
 
         const pointsEarned = response.data.points_earned ?? 0
         if (pointsEarned > 0 && customerData?.name) {
@@ -665,12 +683,6 @@ export default function POSPage() {
             })
           }, 600)
         }
-
-        // Thoda delay do taaki payment dialog properly close ho jaye
-        // Uske baad print dialog open karo with saved order
-        setTimeout(() => {
-          setIsPrintDialogOpen(true)
-        }, 300)
       } else {
         toast({
           title: "Sale Failed",
@@ -696,16 +708,23 @@ export default function POSPage() {
         <div className="flex items-center justify-between gap-1.5 xs:gap-2 max-w-full overflow-x-visible">
           {/* Logo Section */}
           <div className="flex items-center gap-1.5 xs:gap-2 flex-shrink-0 min-w-0">
-            <div className="w-7 h-7 xs:w-8 xs:h-8 sm:w-9 sm:h-9 md:w-10 md:h-10 bg-gradient-to-br from-primary to-secondary rounded-lg xs:rounded-xl flex items-center justify-center shadow-lg text-white flex-shrink-0">
-              {/* Crown Icon */}
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" className="w-4 h-4 xs:w-5 xs:h-5 sm:w-5 sm:h-5 md:w-6 md:h-6">
-                <path d="M3 18L5 6L9 12L12 4L15 12L19 6L21 18H3Z" fill="currentColor"/>
-                <path d="M9 14L7.5 16L9 18" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M15 14L16.5 16L15 18" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </div>
+            {storeLogo ? (
+              <img
+                src={storeLogo}
+                alt="Store Logo"
+                className="w-8 h-8 xs:w-9 xs:h-9 sm:w-10 sm:h-10 md:w-11 md:h-11 rounded-full object-cover border-2 border-primary/30 shadow-md flex-shrink-0"
+              />
+            ) : (
+              <div className="w-7 h-7 xs:w-8 xs:h-8 sm:w-9 sm:h-9 md:w-10 md:h-10 bg-gradient-to-br from-primary to-secondary rounded-full flex items-center justify-center shadow-lg text-white flex-shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" className="w-4 h-4 xs:w-5 xs:h-5 sm:w-5 sm:h-5 md:w-6 md:h-6">
+                  <path d="M3 18L5 6L9 12L12 4L15 12L19 6L21 18H3Z" fill="currentColor"/>
+                </svg>
+              </div>
+            )}
             <div className="hidden xs:block min-w-0">
-              <h1 className="text-xs xs:text-sm sm:text-base md:text-lg font-bold text-foreground leading-tight truncate">{t('app.title')}</h1>
+              <h1 className="text-xs xs:text-sm sm:text-base md:text-lg font-bold text-foreground leading-tight truncate">
+                {storeName || t('app.title')}
+              </h1>
               <p className="text-[7px] xs:text-[8px] sm:text-[9px] md:text-[10px] text-muted-foreground font-medium">{t('pos.terminal')}</p>
             </div>
           </div>
@@ -755,9 +774,9 @@ export default function POSPage() {
               )}
             </button>
 
-            <button 
+            <button
               className="hidden md:flex w-9 h-9 rounded-full bg-muted hover:bg-muted/80 items-center justify-center transition-colors relative"
-              onClick={() => toast({ title: "Notifications", description: "No new notifications right now." })}
+              onClick={() => router.push('/notifications')}
             >
               <Bell className="w-4 h-4 text-muted-foreground" />
               <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border border-white animate-pulse" />
@@ -902,7 +921,7 @@ export default function POSPage() {
             <CardHeader className="pb-2 xs:pb-3 border-b border-white flex-shrink-0">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm xs:text-base sm:text-lg font-bold text-foreground flex items-center gap-1.5 xs:gap-2">
-                  <span className="text-base xs:text-lg sm:text-xl">🍦</span>
+                  <span className="text-base xs:text-lg sm:text-xl">🍽️</span>
                   <span className="hidden xs:inline">{t('menu.title')}</span>
                   <span className="xs:hidden">Menu</span>
                 </CardTitle>
@@ -1147,10 +1166,12 @@ export default function POSPage() {
                   <span className="text-muted-foreground">{t('payment.tax')} ({taxRate}%)</span>
                   <span className="font-medium text-foreground">Rs. {tax.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('payment.donation')}</span>
-                  <span className="font-medium text-primary">Rs. {donation.toFixed(2)}</span>
-                </div>
+                {showDonation && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{t('payment.donation')}</span>
+                    <span className="font-medium text-primary">Rs. 1.00</span>
+                  </div>
+                )}
               </div>
               <Separator className="my-2 xs:my-3" />
               <div className="flex justify-between items-center">

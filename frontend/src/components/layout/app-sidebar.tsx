@@ -26,6 +26,9 @@ import {
   RotateCcw,
   TrendingDown,
   Building2,
+  Bell,
+  Heart,
+  Sparkles,
 } from "lucide-react"
 
 import {
@@ -214,6 +217,27 @@ export function AppSidebar() {
       icon: TrendingDown,
       roles: ['admin', 'cashier'],
       permission: 'expenses'
+    },
+    {
+      title: "Loyalty",
+      url: "/loyalty",
+      icon: Heart,
+      roles: ['admin', 'cashier'],
+      permission: 'customers'
+    },
+    {
+      title: "Notifications",
+      url: "/notifications",
+      icon: Bell,
+      roles: ['admin', 'cashier'],
+      permission: 'dashboard'
+    },
+    {
+      title: "AI Insights",
+      url: "/ai",
+      icon: Sparkles,
+      roles: ['admin'],
+      permission: 'dashboard'
     },
     {
       title: t('nav.settings'),

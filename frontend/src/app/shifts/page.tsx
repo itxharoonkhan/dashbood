@@ -674,25 +674,31 @@ export default function ShiftsPage() {
                 </div>
 
                 {/* Date From */}
-                <div>
+                <div className="relative">
+                  <span className="absolute left-3 top-2 text-xs text-muted-foreground pointer-events-none select-none z-10">
+                    From
+                  </span>
                   <input
                     type="date"
                     value={filterFrom}
                     onChange={e => setFilterFrom(e.target.value)}
                     max={filterTo || undefined}
-                    className="w-full px-3 py-2 text-sm border border-border rounded-md bg-background focus:outline-none focus:ring-1 focus:ring-primary text-muted-foreground"
+                    className="w-full pl-14 pr-3 py-2 text-sm border border-border rounded-md bg-background focus:outline-none focus:ring-1 focus:ring-primary"
                   />
                 </div>
 
                 {/* Date To */}
-                <div>
+                <div className="relative">
+                  <span className="absolute left-3 top-2 text-xs text-muted-foreground pointer-events-none select-none z-10">
+                    To
+                  </span>
                   <input
                     type="date"
                     value={filterTo}
                     onChange={e => setFilterTo(e.target.value)}
                     min={filterFrom || undefined}
                     max="9999-12-31"
-                    className="w-full px-3 py-2 text-sm border border-border rounded-md bg-background focus:outline-none focus:ring-1 focus:ring-primary text-muted-foreground"
+                    className="w-full pl-10 pr-3 py-2 text-sm border border-border rounded-md bg-background focus:outline-none focus:ring-1 focus:ring-primary"
                   />
                 </div>
 

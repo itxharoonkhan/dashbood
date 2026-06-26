@@ -98,7 +98,7 @@ export default function SettingsPage() {
   const [trashItems, setTrashItems] = React.useState<any[]>([])
   const [trashLoading, setTrashLoading] = React.useState(false)
   const [restoringId, setRestoringId] = React.useState<number | null>(null)
-  const isAdmin = typeof window !== 'undefined' && localStorage.getItem('userRole') === 'admin'
+  const isAdmin = typeof window !== 'undefined' && ['admin', 'superadmin'].includes(localStorage.getItem('userRole') || '')
   const currentUserId = typeof window !== 'undefined' ? parseInt(localStorage.getItem('userId') || '0') : 0
 
   const fetchAccounts = React.useCallback(async () => {

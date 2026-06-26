@@ -70,8 +70,8 @@ export default function CustomersPage() {
         gst_number: c.gst_number || "",
         created_at: c.created_at || new Date().toISOString(),
         joinedDate: c.created_at || new Date().toISOString(),
-        totalOrders: parseInt(c.totalOrders || 0),
-        totalSpent: parseFloat(c.totalSpent || 0),
+        totalOrders: parseInt(c.total_orders || 0),
+        totalSpent: parseFloat(c.total_spent || 0),
         loyalty_points: parseInt(c.loyalty_points || 0),
         status: "active" as const,
       }))

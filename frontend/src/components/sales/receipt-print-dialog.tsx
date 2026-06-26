@@ -60,6 +60,7 @@ export function ReceiptPrintDialog({
   amountPaid,
 }: ReceiptPrintDialogProps) {
   const { toast } = useToast()
+  const iframeRef = React.useRef<HTMLIFrameElement>(null)
 
   const [fetchedStoreName, setFetchedStoreName] = React.useState("")
   const [receiptLogo, setReceiptLogo]           = React.useState<string | null>(null)
@@ -68,26 +69,23 @@ export function ReceiptPrintDialog({
   const [showDonationLine, setShowDonationLine] = React.useState(false)
   const [currentTime]                           = React.useState(new Date())
 
-  const API_BASE    = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api'
-  const SERVER_BASE = API_BASE.replace('/api', '')
-
   React.useEffect(() => {
     if (!open) return
 
     const fetchSettings = async () => {
       try {
         const token = localStorage.getItem('authToken')
-        const headers: Record<string, string> = {}
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
         if (token) headers['Authorization'] = `Bearer ${token}`
 
         const [storeRes, receiptRes] = await Promise.all([
-          fetch(`${API_BASE}/settings`, { headers }),
-          fetch(`${API_BASE}/settings/receipt`, { headers }),
+          fetch('/api/settings', { headers }),
+          fetch('/api/settings/receipt', { headers }),
         ])
 
         if (storeRes.ok) {
           const storeData = await storeRes.json()
-          const name = storeData?.data?.store_name || storeData?.settings?.store_name || ''
+          const name = storeData?.data?.store_name || ''
           if (name) setFetchedStoreName(storeName || name)
         }
 
@@ -108,12 +106,12 @@ export function ReceiptPrintDialog({
 
     if (storeName) setFetchedStoreName(storeName)
     fetchSettings()
-  }, [open, storeName, API_BASE])
+  }, [open, storeName])
 
   // Build opts for HTML generation
   const receiptOpts = React.useMemo(() => ({
     storeName: fetchedStoreName || storeName || 'Elites POS',
-    logoUrl: receiptLogo ? `${SERVER_BASE}${receiptLogo}` : undefined,
+    logoUrl: receiptLogo || undefined,
     footerMsg: footerMessage,
     items: cart.map(i => ({ name: i.name, quantity: i.quantity, price: i.price })),
     invoiceNumber: orderNumber || '------',
@@ -135,7 +133,7 @@ export function ReceiptPrintDialog({
     finalTotal: total,
     splitPayments,
   }), [
-    fetchedStoreName, storeName, receiptLogo, SERVER_BASE, footerMessage,
+    fetchedStoreName, storeName, receiptLogo, footerMessage,
     cart, orderNumber, orderTime, currentTime, tableNumber, customerName, customerPhone,
     subtotal, tax, showTaxLine, showDonationLine, discount, loyaltyDiscount,
     paymentMethod, amountPaid, total, splitPayments,
@@ -144,7 +142,13 @@ export function ReceiptPrintDialog({
   const previewHtml = React.useMemo(() => generateReceiptHTML(receiptOpts), [receiptOpts])
 
   const handlePrint = () => {
-    printReceipt(receiptOpts)
+    const iframeWin = iframeRef.current?.contentWindow
+    if (iframeWin) {
+      iframeWin.focus()
+      iframeWin.print()
+    } else {
+      printReceipt(receiptOpts)
+    }
     toast({ title: "Print Started", description: "Receipt is being printed" })
   }
 
@@ -158,6 +162,7 @@ export function ReceiptPrintDialog({
         {/* Receipt Preview — iframe showing exact print output */}
         <div className="flex-1 overflow-auto bg-muted/30 p-4 rounded-lg flex justify-center">
           <iframe
+            ref={iframeRef}
             srcDoc={previewHtml}
             className="bg-white rounded shadow-sm"
             style={{ width: '300px', minHeight: '400px', border: 'none' }}
