@@ -76,16 +76,20 @@ export function AIInsights({ data: providedData }: AIInsightsProps) {
           }}),
         })
         
-        const aiData = await aiResponse.json()
-
         if (!aiResponse.ok) {
-          // Silent log for developer, don't throw to break UI
-          console.warn('AI Status:', aiData.details || aiData.error);
           setInsight("Current sales trends are stable. Continue monitoring your top categories for growth opportunities.");
           return;
         }
-        
-        setInsight(aiData.text || "System is performing well. Focus on maintaining current sales momentum.");
+
+        let aiData: any = null
+        try {
+          aiData = await aiResponse.json()
+        } catch {
+          setInsight("Current sales trends are stable. Continue monitoring your top categories for growth opportunities.");
+          return;
+        }
+
+        setInsight(aiData?.text || aiData?.insight || "System is performing well. Focus on maintaining current sales momentum.");
       } catch (error: any) {
         console.error("AI Insight Error:", error)
         setInsight("System is running smoothly. Stock levels and sales trends are within normal parameters.")

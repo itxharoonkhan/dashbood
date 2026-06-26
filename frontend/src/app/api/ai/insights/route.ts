@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth';
-import { ai } from '@/ai/genkit';
+
+let ai: { generate: (prompt: string) => Promise<{ text: string }> } | null = null;
+try {
+  ai = (await import('@/ai/genkit')).ai;
+} catch {
+  // genkit not available (missing API key or module error) — fallback will be used
+}
 
 interface SalesData {
   totalSales?: number;
@@ -15,6 +21,7 @@ interface SalesData {
 // Retry only on 503 — any other error throws immediately
 // Delays: 1s → 2s → 3s (exponential backoff)
 async function generateWithRetry(prompt: string, maxAttempts = 3): Promise<string> {
+  if (!ai) throw new Error('AI not available');
   const delays = [1000, 2000, 3000];
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
