@@ -3,6 +3,14 @@ import path from 'path';
 
 const nextConfig: NextConfig = {
   outputFileTracingRoot: path.join(__dirname),
+  async headers() {
+    return [
+      {
+        source: '/.well-known/assetlinks.json',
+        headers: [{ key: 'Content-Type', value: 'application/json' }],
+      },
+    ]
+  },
   serverExternalPackages: ['genkit', '@genkit-ai/google-genai', '@genkit-ai/core'],
   webpack: (config) => {
     config.resolve.alias['@opentelemetry/exporter-jaeger'] = false
