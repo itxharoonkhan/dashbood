@@ -3,6 +3,10 @@ import path from 'path';
 
 const nextConfig: NextConfig = {
   outputFileTracingRoot: path.join(__dirname),
+  webpack: (config) => {
+    config.resolve.alias['@opentelemetry/exporter-jaeger'] = false
+    return config
+  },
   images: {
     remotePatterns: [
       {
