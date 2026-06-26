@@ -13,38 +13,36 @@ export async function GET(req: NextRequest) {
     const from = searchParams.get('from')
     const to = searchParams.get('to')
     const dateRx = /^\d{4}-\d{2}-\d{2}$/
-    const dateFilter = from && to && dateRx.test(from) && dateRx.test(to)
-      ? `AND DATE(po.created_at) BETWEEN '${from}'::date AND '${to}'::date`
-      : ''
-    const tid = user.tenant_id
+    const tid = user.tenant_id!
 
-    const summary = await prisma.$queryRaw<unknown[]>(Prisma.sql`
+    // Optional date filter scoped to purchase orders (applied in JOIN so all suppliers still appear)
+    const poDateFilter = from && to && dateRx.test(from) && dateRx.test(to)
+      ? Prisma.sql`AND po.created_at::date BETWEEN ${from}::date AND ${to}::date`
+      : Prisma.sql``
+
+    // Per-supplier aggregate stats required by the frontend SupplierStat interface
+    const supplierStats = await prisma.$queryRaw<unknown[]>(Prisma.sql`
       SELECT
-        COUNT(po.id)::int AS total_pos,
-        COUNT(DISTINCT po.supplier_id)::int AS suppliers_used
-      FROM purchase_orders po WHERE po.tenant_id = ${tid} ${Prisma.raw(dateFilter)}
-    `)
-    const topSuppliers = await prisma.$queryRaw<unknown[]>(Prisma.sql`
-      SELECT s.id, s.name, COUNT(po.id)::int AS po_count
+        s.id,
+        s.name,
+        s.phone,
+        s.email,
+        s.status,
+        COUNT(DISTINCT po.id)::int AS total_pos,
+        COALESCE(SUM(poi.quantity_ordered * poi.unit_cost), 0) AS total_ordered_value,
+        COALESCE(SUM(CASE WHEN poi.quantity_received > 0 THEN poi.quantity_received * poi.unit_cost ELSE 0 END), 0) AS total_received_value,
+        COUNT(DISTINCT CASE WHEN po.status IN ('draft', 'sent', 'partially_received') THEN po.id END)::int AS pending_pos
       FROM suppliers s
-      LEFT JOIN purchase_orders po ON po.supplier_id = s.id AND po.tenant_id = ${tid} ${Prisma.raw(dateFilter)}
+      LEFT JOIN purchase_orders po ON po.supplier_id = s.id ${poDateFilter}
+      LEFT JOIN purchase_order_items poi ON poi.po_id = po.id
       WHERE s.tenant_id = ${tid} AND s.is_deleted = false
-      GROUP BY s.id ORDER BY po_count DESC LIMIT 10
-    `)
-    const byStatus = await prisma.$queryRaw<unknown[]>(Prisma.sql`
-      SELECT status, COUNT(*)::int AS count
-      FROM purchase_orders WHERE tenant_id = ${tid} ${Prisma.raw(dateFilter)}
-      GROUP BY status
-    `)
-    const monthly = await prisma.$queryRaw<unknown[]>(Prisma.sql`
-      SELECT TO_CHAR(created_at, 'YYYY-MM') AS month, COUNT(*)::int AS orders
-      FROM purchase_orders WHERE tenant_id = ${tid} AND status != 'cancelled' ${Prisma.raw(dateFilter)}
-      GROUP BY month ORDER BY month ASC
+      GROUP BY s.id, s.name, s.phone, s.email, s.status
+      ORDER BY total_pos DESC, s.name ASC
     `)
 
     return NextResponse.json({
       success: true,
-      data: { summary: Array.isArray(summary) ? summary[0] : {}, topSuppliers, byStatus, monthly }
+      data: { supplierStats }
     })
   } catch (err) {
     console.error('Suppliers report error:', err)

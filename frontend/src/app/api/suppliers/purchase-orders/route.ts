@@ -12,19 +12,24 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url)
     const supplier_id = searchParams.get('supplier_id')
-    const supplierFilter = supplier_id ? `AND po.supplier_id = ${parseInt(supplier_id)}` : ''
+    const tid = user.tenant_id!
+    const supplierFilter = supplier_id
+      ? Prisma.sql`AND po.supplier_id = ${parseInt(supplier_id)}`
+      : Prisma.sql``
 
     const rows = await prisma.$queryRaw<unknown[]>(Prisma.sql`
       SELECT po.*,
         s.name AS supplier_name,
         u.name AS created_by_name,
         COUNT(poi.id)::int AS item_count,
-        COALESCE(SUM(poi.quantity_ordered * poi.unit_cost), 0) AS computed_total
+        COALESCE(SUM(poi.quantity_ordered * poi.unit_cost), 0) AS total_value,
+        COALESCE(SUM(poi.quantity_ordered), 0)::int AS total_qty_ordered,
+        COALESCE(SUM(poi.quantity_received), 0)::int AS total_qty_received
       FROM purchase_orders po
       JOIN suppliers s ON s.id = po.supplier_id
       JOIN users u ON u.id = po.created_by
       LEFT JOIN purchase_order_items poi ON poi.po_id = po.id
-      WHERE po.tenant_id = ${user.tenant_id} ${Prisma.raw(supplierFilter)}
+      WHERE po.tenant_id = ${tid} ${supplierFilter}
       GROUP BY po.id, s.name, u.name
       ORDER BY po.created_at DESC
     `)
@@ -59,12 +64,12 @@ export async function POST(req: NextRequest) {
         created_by: user.id, tenant_id: user.tenant_id!
       }
     })
-    for (const it of items as { product_id: number; quantity: number; unit_cost: number }[]) {
+    for (const it of items as { product_id: number; quantity_ordered: number; unit_cost: number }[]) {
       await prisma.purchaseOrderItem.create({
         data: {
           po_id: order.id,
           product_id: parseInt(String(it.product_id)),
-          quantity_ordered: parseInt(String(it.quantity)) || 0,
+          quantity_ordered: parseInt(String(it.quantity_ordered)) || 0,
           unit_cost: parseFloat(String(it.unit_cost)) || 0
         }
       })

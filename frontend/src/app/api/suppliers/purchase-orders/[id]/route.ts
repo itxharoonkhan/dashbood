@@ -17,7 +17,30 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       }
     })
     if (!po) return NextResponse.json({ success: false, message: 'Purchase order not found' }, { status: 404 })
-    return NextResponse.json({ success: true, data: po })
+
+    // Flatten nested relations into the shape the frontend PODetail interface expects
+    const { supplier, purchase_order_items, ...rest } = po as any
+    const data = {
+      ...rest,
+      supplier_name: supplier?.name ?? null,
+      supplier_phone: supplier?.phone ?? null,
+      supplier_email: supplier?.email ?? null,
+      items: (purchase_order_items ?? []).map((item: any) => ({
+        id: item.id,
+        product_id: item.product_id,
+        product_name: item.product?.name ?? '',
+        sku: item.product?.sku ?? null,
+        current_stock: item.product?.stock ?? 0,
+        quantity_ordered: item.quantity_ordered,
+        quantity_received: item.quantity_received,
+        unit_cost: Number(item.unit_cost),
+      })),
+      item_count: purchase_order_items?.length ?? 0,
+      total_value: (purchase_order_items ?? []).reduce(
+        (s: number, i: any) => s + Number(i.unit_cost) * i.quantity_ordered, 0
+      ),
+    }
+    return NextResponse.json({ success: true, data })
   } catch (err) {
     return NextResponse.json({ success: false, message: 'Failed to fetch purchase order' }, { status: 500 })
   }
