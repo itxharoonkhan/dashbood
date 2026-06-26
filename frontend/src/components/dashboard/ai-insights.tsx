@@ -59,10 +59,21 @@ export function AIInsights({ data: providedData }: AIInsightsProps) {
         `
 
         // Call the internal API route instead of importing genkit directly
+        const token = localStorage.getItem('authToken')
         const aiResponse = await fetch('/api/ai/insights', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt })
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ prompt, salesData: {
+            totalSales:     statsData?.todaySales,
+            totalAmount:    statsData?.todayRevenue,
+            lowStock:       statsData?.lowStock,
+            topCategories:  topCategories?.map((c: any) => c.category),
+            weekRevenue:    statsData?.weekRevenue,
+            monthRevenue:   statsData?.monthRevenue,
+          }}),
         })
         
         const aiData = await aiResponse.json()

@@ -921,8 +921,12 @@ export default function POSPage() {
             <CardHeader className="pb-2 xs:pb-3 border-b border-white flex-shrink-0">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm xs:text-base sm:text-lg font-bold text-foreground flex items-center gap-1.5 xs:gap-2">
-                  <span className="text-base xs:text-lg sm:text-xl">🍽️</span>
-                  <span className="hidden xs:inline">{t('menu.title')}</span>
+                  {storeLogo ? (
+                    <img src={storeLogo} alt="logo" className="h-7 w-7 xs:h-8 xs:w-8 rounded-full object-cover border border-white/20 flex-shrink-0" />
+                  ) : (
+                    <span className="text-base xs:text-lg sm:text-xl">🍦</span>
+                  )}
+                  <span className="hidden xs:inline">{storeName || t('menu.title')}</span>
                   <span className="xs:hidden">Menu</span>
                 </CardTitle>
               </div>

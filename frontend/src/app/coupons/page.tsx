@@ -407,7 +407,7 @@ export default function CouponsPage() {
                           </td>
                           <td className="p-4">
                             <Badge variant="outline" className="text-xs">
-                              {c.type === "percentage" ? <Percent className="w-3 h-3 mr-1" /> : <span className="mr-1 text-xs">Rs.</span>}
+                              {c.type === "percentage" ? <Percent className="w-3 h-3 mr-1" /> : null}
                               {c.type === "percentage" ? "Percentage" : "Flat"}
                             </Badge>
                           </td>
