@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
     const sDateF = salesDateFilter(startDate, endDate)
     const eDateF = expenseDateFilter(startDate, endDate)
 
-    // Run queries sequentially — avoids concurrent WebSocket issues with NeonDB
+    // Sequential queries to avoid concurrent WebSocket issues with NeonDB
     const salesPerformance = await prisma.$queryRawUnsafe<unknown[]>(`
       SELECT DATE(s.created_at)::text AS period_label,
         COUNT(*)::int AS total_sales,
@@ -43,25 +43,35 @@ export async function GET(req: NextRequest) {
       ORDER BY DATE(s.created_at) ASC
     `)
 
+    // Returns { name, value } to match frontend expectations
     const categoryDistribution = await prisma.$queryRawUnsafe<unknown[]>(`
-      SELECT COALESCE(p.category, 'Uncategorised') AS category,
-        COALESCE(SUM(si.quantity), 0)::int AS total_qty,
-        COALESCE(SUM(si.quantity * si.price), 0)::float AS total_revenue
+      SELECT
+        COALESCE(p.category, 'Uncategorised') AS name,
+        COALESCE(SUM(si.quantity * si.price), 0)::float AS value,
+        COALESCE(SUM(si.quantity), 0)::int AS total_qty
       FROM sale_items si
       JOIN products p ON p.id = si.product_id
       JOIN sales s ON s.id = si.sale_id
       WHERE s.tenant_id = ${tid} AND s.status = 'completed' ${sDateF}
       GROUP BY p.category
-      ORDER BY total_revenue DESC
+      ORDER BY value DESC
     `)
 
     const revenueRaw = await prisma.$queryRawUnsafe<unknown[]>(`
       SELECT
         COALESCE(SUM(final_total), 0)::float AS total_revenue,
-        COALESCE(SUM(tax), 0)::float AS total_tax_collected,
-        COUNT(*)::int AS transaction_count
+        COALESCE(SUM(tax), 0)::float         AS total_tax_collected,
+        COUNT(*)::int                         AS transaction_count
       FROM sales s
       WHERE tenant_id = ${tid} AND status = 'completed' ${sDateF}
+    `)
+
+    const costRaw = await prisma.$queryRawUnsafe<unknown[]>(`
+      SELECT COALESCE(SUM(si.quantity * p.cost_price), 0)::float AS total_cost
+      FROM sale_items si
+      JOIN products p ON p.id = si.product_id
+      JOIN sales s    ON s.id = si.sale_id
+      WHERE s.tenant_id = ${tid} AND s.status = 'completed' ${sDateF}
     `)
 
     const expenseRaw = await prisma.$queryRawUnsafe<unknown[]>(`
@@ -70,12 +80,16 @@ export async function GET(req: NextRequest) {
       WHERE tenant_id = ${tid} AND is_deleted = false ${eDateF}
     `)
 
-    const rev = (Array.isArray(revenueRaw) ? revenueRaw[0] : {}) as Record<string, number>
-    const totalRevenue  = parseFloat(String(rev?.total_revenue  ?? 0))
-    const totalExpenses = parseFloat(String(
-      (Array.isArray(expenseRaw) ? expenseRaw[0] : {} as Record<string, number>)?.total_expenses ?? 0
+    const rev          = (Array.isArray(revenueRaw) ? revenueRaw[0] : {}) as Record<string, number>
+    const totalRevenue = parseFloat(String(rev?.total_revenue ?? 0))
+    const totalCost    = parseFloat(String(
+      (Array.isArray(costRaw) ? costRaw[0] as Record<string, number> : {})?.total_cost ?? 0
     ))
-    const netProfit    = totalRevenue - totalExpenses
+    const grossProfit  = totalRevenue - totalCost
+    const totalExpenses = parseFloat(String(
+      (Array.isArray(expenseRaw) ? expenseRaw[0] as Record<string, number> : {})?.total_expenses ?? 0
+    ))
+    const netProfit    = grossProfit - totalExpenses
     const profitMargin = totalRevenue > 0
       ? parseFloat(((netProfit / totalRevenue) * 100).toFixed(1))
       : 0
@@ -90,10 +104,12 @@ export async function GET(req: NextRequest) {
           transaction_count:   rev?.transaction_count   ?? 0,
         },
         profitLoss: {
-          total_revenue:   totalRevenue,
-          total_expenses:  totalExpenses,
-          net_profit:      netProfit,
-          profit_margin:   profitMargin,
+          total_revenue:  totalRevenue,
+          total_cost:     totalCost,
+          gross_profit:   grossProfit,
+          total_expenses: totalExpenses,
+          net_profit:     netProfit,
+          profit_margin:  profitMargin,
         },
       },
     })
