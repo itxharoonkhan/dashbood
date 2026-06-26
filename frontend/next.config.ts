@@ -5,6 +5,7 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: path.join(__dirname),
   webpack: (config) => {
     config.resolve.alias['@opentelemetry/exporter-jaeger'] = false
+    config.resolve.alias['@genkit-ai/firebase'] = false
     return config
   },
   images: {
